@@ -20,7 +20,8 @@ create table quiz_history (
 );
 ```
 
-`questions` jsonb shape (array), same fields as every earlier version:
+`questions` jsonb shape (array), same fields as every earlier version,
+plus one new optional field for Modified True or False questions:
 ```json
 [
   {
@@ -30,9 +31,23 @@ create table quiz_history (
     "yourAnswer": "Mitochondria",
     "isCorrect": true,
     "explanation": "Mitochondria produce ATP."
+  },
+  {
+    "question": "The mitochondria is the site of protein synthesis.",
+    "choices": ["True", "False"],
+    "correctAnswer": "False",
+    "modifiedAnswer": "ATP production",
+    "yourAnswer": "False",
+    "isCorrect": true,
+    "explanation": "Protein synthesis happens at ribosomes; mitochondria handle ATP production."
   }
 ]
 ```
+- `modifiedAnswer`: only present on Modified True or False questions
+  where `correctAnswer` is `"False"` — the term/reason the student must
+  also supply. Absent for True or False, Multiple Choice, and
+  Identification questions, and absent even on Modified True or False
+  questions where the statement is actually `"True"`.
 
 - `id` generation and format unchanged from earlier versions
   (timestamp-with-milliseconds + slugified title) — still used as the
