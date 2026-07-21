@@ -137,20 +137,70 @@ function extractJson(text) {
   return JSON.parse(jsonText);
 }
 
+// Both routes that call into this module (generate-quiz.js,
+// regenerate-question.js) set `export const maxDuration = 60`. If the
+// Gemini call itself is left to run unbounded, a slow request gets killed
+// by Vercel's platform-level timeout instead of our own code -- the client
+// then sees an opaque 504 with no JSON body at all. Aborting a little
+// early lets us return a real, specific error instead.
+const GEMINI_TIMEOUT_MS = 50000;
+
+// Maps whatever the SDK actually threw into a specific, safe-to-show
+// message -- distinguishing size/timeout/rate-limit/server-side causes
+// instead of collapsing every failure into one generic string (docs/
+// rules.md #10). The full error (which can include request-echoing detail
+// we don't want to hand to the client) is always logged server-side via
+// console.error before this runs, so the real cause is still in Vercel's
+// function logs even when the client-facing message stays generic-ish.
+function describeGeminiFailure(err, elapsedMs) {
+  if (err && err.name === 'AbortError') {
+    return `Quiz generation timed out after ${Math.round(elapsedMs / 1000)}s. Try fewer pages or a smaller document.`;
+  }
+  const status = err && (err.status || err.statusCode);
+  if (status === 413) {
+    return 'The document is too large for Gemini to process. Try fewer scanned pages.';
+  }
+  if (status === 400) {
+    return 'Gemini rejected the document as malformed or unreadable (HTTP 400). If this is a scanned PDF, try recapturing the affected page(s).';
+  }
+  if (status === 429) {
+    return 'Gemini API rate limit or quota exceeded. Wait a moment and try again.';
+  }
+  if (status === 503 || status === 500) {
+    return "Gemini's service is temporarily unavailable (HTTP " + status + '). Please try again shortly.';
+  }
+  if (status) {
+    return `Quiz generation failed (Gemini returned HTTP ${status}). Please try again.`;
+  }
+  return 'Quiz generation failed -- could not reach Gemini. Check your connection and try again.';
+}
+
 async function callGemini(promptText, files) {
   const ai = getClient();
   const contents = [{ text: promptText }, ...filesToParts(files)];
+  const totalBase64Bytes = files.reduce((sum, f) => sum + Math.ceil(f.buffer.length / 3) * 4, 0);
+  console.log(
+    `[gemini] sending ${files.length} file(s) to ${MODEL}, raw bytes=${files.reduce((s, f) => s + f.buffer.length, 0)}, ` +
+      `base64 bytes=${totalBase64Bytes} (${(totalBase64Bytes / 1024 / 1024).toFixed(2)}MB)`,
+  );
+  const startedAt = Date.now();
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), GEMINI_TIMEOUT_MS);
   let response;
   try {
     response = await ai.models.generateContent({
       model: MODEL,
       contents,
-      config: { responseMimeType: 'application/json' },
+      config: { responseMimeType: 'application/json', abortSignal: controller.signal },
     });
+    console.log(`[gemini] request succeeded in ${Date.now() - startedAt}ms`);
   } catch (err) {
+    const elapsedMs = Date.now() - startedAt;
     // Never forward the raw SDK error (it can echo request details) to the client.
-    console.error('[gemini] request failed:', err);
-    throw badGeminiResponse('Quiz generation failed. Please try again.');
+    console.error(`[gemini] request failed after ${elapsedMs}ms:`, err);
+    throw badGeminiResponse(describeGeminiFailure(err, elapsedMs));
+  } finally {
+    clearTimeout(timeout);
   }
 
   try {
