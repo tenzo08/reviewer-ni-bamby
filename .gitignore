@@ -10,6 +10,10 @@ npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 
+# Generated from node_modules/jscanify by scripts/copy-opencv.mjs
+# (postinstall) -- not committed, same reasoning as node_modules itself.
+public/opencv.js
+
 # Vite build output
 dist/
 dist-ssr/
