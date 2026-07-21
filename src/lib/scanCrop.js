@@ -1,101 +1,93 @@
-import jscanify from 'jscanify/client';
+// A scanned page never needs full camera resolution (a phone photo is
+// commonly 3000-4000px) for edge detection or for a legible crop -- this is
+// downscaled before handing off to the worker, per docs/design.md's
+// "Photos are downscaled before edge detection runs" requirement. The
+// output crop still targets a modest, OCR-adequate size (see
+// autoCropImage's defaults below), which Part A's server-side compression
+// re-caps further anyway, so there's no reason to preserve more detail than
+// this through the crop step.
+const MAX_PROCESS_EDGE = 1600;
 
-let cvLoadPromise = null;
+let worker = null;
+let requestId = 0;
+const pending = new Map();
 
-// Lazily loads the self-hosted OpenCV.js build (public/opencv.js, copied
-// from node_modules/jscanify by scripts/copy-opencv.mjs) only when the
-// scan staging screen actually needs it -- never blocks any other screen's
-// load, and per docs/rules.md #7 this is a best-effort enhancement: any
-// failure here must resolve to "no auto-crop available" rather than throw
-// somewhere the scan flow can't recover from.
-function loadOpenCv(timeoutMs = 15000) {
-  if (window.cv && window.cv.Mat) return Promise.resolve(window.cv);
-  if (cvLoadPromise) return cvLoadPromise;
-
-  cvLoadPromise = new Promise((resolve, reject) => {
-    const timer = setTimeout(() => {
-      reject(new Error('Timed out loading the edge-detection library.'));
-    }, timeoutMs);
-
-    const onReady = () => {
-      clearTimeout(timer);
-      resolve(window.cv);
-    };
-
-    if (window.cv) {
-      // Script tag already injected by an earlier call; opencv itself may
-      // still be finishing its WASM init.
-      window.cv['onRuntimeInitialized'] = onReady;
-      return;
+// The Worker (and, inside it, the OpenCV.js WASM runtime + jscanify) loads
+// once per scan session, not once per photo: this module-level `worker`
+// variable is created lazily on the first captured photo and reused for
+// every photo after that, for as long as the page stays loaded.
+function getWorker() {
+  if (worker) return worker;
+  worker = new Worker(new URL('./scanWorker.js', import.meta.url));
+  worker.onmessage = (e) => {
+    const { id, success, blob, error } = e.data;
+    const entry = pending.get(id);
+    if (!entry) return;
+    pending.delete(id);
+    clearTimeout(entry.timeoutId);
+    if (error) console.warn('[scanCrop] worker reported an error:', error);
+    entry.resolve(success ? { success: true, blob } : { success: false });
+  };
+  worker.onerror = (e) => {
+    console.warn('[scanCrop] scan worker crashed, falling back to uncropped originals for any pending photos:', e.message);
+    for (const entry of pending.values()) {
+      clearTimeout(entry.timeoutId);
+      entry.resolve({ success: false });
     }
-
-    const script = document.createElement('script');
-    script.src = '/opencv.js';
-    script.async = true;
-    script.onerror = () => {
-      clearTimeout(timer);
-      reject(new Error('Could not load the edge-detection library.'));
-    };
-    script.onload = () => {
-      if (!window.cv) {
-        clearTimeout(timer);
-        reject(new Error('Edge-detection library failed to initialize.'));
-        return;
-      }
-      window.cv['onRuntimeInitialized'] = onReady;
-    };
-    document.head.appendChild(script);
-  }).catch((err) => {
-    // Don't cache a rejected load -- a later retry (e.g. next captured
-    // page) should get a fresh attempt rather than being stuck failed
-    // for the rest of the session.
-    cvLoadPromise = null;
-    throw err;
-  });
-
-  return cvLoadPromise;
+    pending.clear();
+    // Don't keep reusing a dead worker -- the next captured photo gets a
+    // fresh one rather than being stuck failing for the rest of the session.
+    worker = null;
+  };
+  return worker;
 }
 
-function loadImageElement(file) {
-  return new Promise((resolve, reject) => {
-    const url = URL.createObjectURL(file);
-    const img = new Image();
-    img.onload = () => resolve({ img, url });
-    img.onerror = () => {
-      URL.revokeObjectURL(url);
-      reject(new Error('Could not read the captured photo.'));
-    };
-    img.src = url;
+async function createDownscaledBitmap(file) {
+  const full = await createImageBitmap(file);
+  const longEdge = Math.max(full.width, full.height);
+  if (longEdge <= MAX_PROCESS_EDGE) return full;
+  const scale = MAX_PROCESS_EDGE / longEdge;
+  const resized = await createImageBitmap(full, {
+    resizeWidth: Math.round(full.width * scale),
+    resizeHeight: Math.round(full.height * scale),
+    resizeQuality: 'high',
   });
-}
-
-function canvasToBlob(canvas) {
-  return new Promise((resolve) => {
-    canvas.toBlob((blob) => resolve(blob), 'image/jpeg', 0.9);
-  });
+  full.close();
+  return resized;
 }
 
 // Attempts client-side edge detection + perspective correction on a
-// captured photo. Best-effort: any failure (library fails to load, no
-// paper contour found, jscanify throws) resolves to { success: false }
-// rather than rejecting, so the caller always has the uncropped original
-// to fall back to -- this must never block the scan staging flow.
-export async function autoCropImage(imageFile, { outputWidth = 1240, outputHeight = 1754 } = {}) {
-  let url;
+// captured photo, via a Worker so the main thread (and therefore the rest
+// of the scan staging screen's UI) is never blocked while it runs. Best-
+// effort: any failure (worker unavailable, no paper contour found, a
+// timeout) resolves to { success: false } rather than rejecting, so the
+// caller always has the uncropped original to fall back to -- this must
+// never block the scan staging flow (docs/rules.md #7).
+export async function autoCropImage(imageFile, { outputWidth = 1240, outputHeight = 1754, timeoutMs = 15000 } = {}) {
+  let bitmap;
   try {
-    await loadOpenCv();
-    const { img, url: objectUrl } = await loadImageElement(imageFile);
-    url = objectUrl;
-    const scanner = new jscanify();
-    const canvas = scanner.extractPaper(img, outputWidth, outputHeight);
-    if (!canvas) return { success: false };
-    const blob = await canvasToBlob(canvas);
-    if (!blob || blob.size === 0) return { success: false };
-    return { success: true, blob };
+    bitmap = await createDownscaledBitmap(imageFile);
   } catch (err) {
-    console.warn('[scanCrop] auto-crop failed, falling back to the original photo:', err);
+    console.warn('[scanCrop] could not read the captured photo, falling back to the original:', err);
     return { success: false };
-  } finally {
-    if (url) URL.revokeObjectURL(url);
   }
+
+  return new Promise((resolve) => {
+    const id = ++requestId;
+    const timeoutId = setTimeout(() => {
+      pending.delete(id);
+      console.warn('[scanCrop] auto-crop timed out, falling back to the original photo');
+      resolve({ success: false });
+    }, timeoutMs);
+    pending.set(id, { resolve, timeoutId });
+
+    try {
+      getWorker().postMessage({ id, bitmap, outputWidth, outputHeight }, [bitmap]);
+    } catch (err) {
+      clearTimeout(timeoutId);
+      pending.delete(id);
+      console.warn('[scanCrop] could not hand the photo off to the worker, falling back to the original:', err);
+      resolve({ success: false });
+    }
+  });
 }
