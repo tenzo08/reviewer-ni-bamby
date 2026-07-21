@@ -28,6 +28,42 @@ This runs `vercel dev`, which serves the Vite frontend and emulates the
 you'll be asked for the shared access password (`ACCESS_PASSWORD` in
 `.env.local`).
 
+## Quick local testing (no Vercel CLI)
+
+Separate from the `npm run dev` / `vercel dev` flow above -- use this if you
+want to try the app locally before setting up Vercel at all.
+
+```
+npm run dev:local
+```
+
+This starts two plain Node processes together (via `concurrently`, no
+Vercel CLI involved):
+
+- `dev-server/local-api-server.js` -- a small Express server that imports
+  each handler straight from `api/*.js` and mounts it at the matching
+  route, emulating the same `(req, res)` contract Vercel's Node runtime
+  gives those handlers in production (traced from `@vercel/node`'s own
+  source, not guessed -- see the comments at the top of that file).
+- `vite`, Vite's own dev server, with `server.proxy` (`vite.config.js`)
+  forwarding `/api/*` requests to the Express server above.
+
+Because the frontend still calls `fetch('/api/...')` with the same
+relative paths either way, `src/` doesn't know or care which of the three
+modes (`dev:local`, `vercel dev`, or the real deployment) is serving it.
+
+This still needs the same `.env.local` values as `vercel dev` --
+`GEMINI_API_KEY`, `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`,
+`ACCESS_PASSWORD` -- since the `api/` handlers themselves are completely
+unchanged; only how they're invoked locally differs. The access gate
+behaves identically in this mode too (same `api/_lib/auth.js`, same
+`requireAuth` check on every route except `auth-check.js`), not a relaxed
+local-only version of it.
+
+This local path is for quick iteration only -- `vercel dev` (via `npm run
+dev`) is still the real pre-deploy check per `DEPLOYMENT.md`, since it's
+what actually models the Vercel runtime rather than emulating it.
+
 ## Data
 
 History, saved PDFs, weak spots, and analytics all live in Supabase
