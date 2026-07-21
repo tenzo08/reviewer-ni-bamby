@@ -470,6 +470,36 @@ input {
   font: inherit;
 }
 
+.history-card-selectable {
+  border-color: var(--border);
+}
+
+.history-card-selected {
+  border-color: var(--primary);
+  background: color-mix(in srgb, var(--primary) 10%, var(--card));
+}
+
+.history-card-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.history-card-checkbox {
+  width: 20px;
+  height: 20px;
+  margin-top: 2px;
+  flex-shrink: 0;
+  accent-color: var(--primary);
+}
+
+.history-selection-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+
 .history-card-title {
   font-size: 16px;
   font-weight: 700;

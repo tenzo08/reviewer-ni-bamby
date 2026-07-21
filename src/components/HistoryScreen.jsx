@@ -6,6 +6,9 @@ import { ErrorBanner, LoadingView, ScreenHeader, SecondaryButton, formatDate } f
 export default function HistoryScreen({ navigate, goHome }) {
   const [entries, setEntries] = useState(null);
   const [error, setError] = useState('');
+  const [selectionMode, setSelectionMode] = useState(false);
+  const [selectedIds, setSelectedIds] = useState(new Set());
+  const [deleting, setDeleting] = useState(false);
   const { confirmAsync } = useModals();
 
   const load = useCallback(async () => {
@@ -32,6 +35,68 @@ export default function HistoryScreen({ navigate, goHome }) {
     }
   };
 
+  const startSelection = () => {
+    setSelectionMode(true);
+    setSelectedIds(new Set());
+    setError('');
+  };
+
+  const cancelSelection = () => {
+    setSelectionMode(false);
+    setSelectedIds(new Set());
+  };
+
+  const toggleSelected = (id) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const allSelected = entries !== null && entries.length > 0 && selectedIds.size === entries.length;
+  const toggleSelectAll = () => {
+    setSelectedIds(allSelected ? new Set() : new Set(entries.map((e) => e.id)));
+  };
+
+  const deleteSelected = async () => {
+    const ids = [...selectedIds];
+    if (ids.length === 0) return;
+    const ok = await confirmAsync(
+      'Delete selected results?',
+      `Delete ${ids.length} quiz result${ids.length === 1 ? '' : 's'}? This can't be undone.`,
+      'Delete',
+    );
+    if (!ok) return;
+    setDeleting(true);
+    setError('');
+    const results = await Promise.allSettled(ids.map((id) => apiFetch(`/api/history/${encodeURIComponent(id)}`, { method: 'DELETE' })));
+    const failedCount = results.filter((r) => r.status === 'rejected').length;
+    if (failedCount > 0) {
+      setError(`Could not delete ${failedCount} of ${ids.length} selected result(s). Please try again.`);
+    }
+    setDeleting(false);
+    setSelectionMode(false);
+    setSelectedIds(new Set());
+    load();
+  };
+
+  const handleCardClick = (entry) => {
+    if (selectionMode) {
+      toggleSelected(entry.id);
+    } else {
+      navigate('historyDetail', { id: entry.id });
+    }
+  };
+
+  const handleCardKeyDown = (e, entry) => {
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      handleCardClick(entry);
+    }
+  };
+
   return (
     <div className="screen">
       <ScreenHeader title="History" onBack={goHome} />
@@ -43,22 +108,65 @@ export default function HistoryScreen({ navigate, goHome }) {
         <p className="subtext">No quizzes yet.</p>
       ) : (
         <>
-          {entries.map((e) => (
-            <button
-              key={e.id}
-              type="button"
-              className="history-card"
-              onClick={() => navigate('historyDetail', { id: e.id })}
-            >
-              <p className="history-card-title">{e.title}</p>
-              <p className="subtext">{formatDate(e.date)}</p>
-              <p className="subtext">{e.sourcePdfs.join(', ')}</p>
-              <p className={e.completed ? 'history-score' : 'history-in-progress'}>
-                {e.completed ? `${e.score} / ${e.total}` : `In progress · ${e.answeredCount}/${e.total} answered`}
-              </p>
-            </button>
-          ))}
-          <SecondaryButton title="Clear All History" onClick={clearAll} style={{ marginTop: 16 }} />
+          {selectionMode && (
+            <div className="history-selection-bar">
+              <button type="button" className="link-button" onClick={toggleSelectAll}>
+                {allSelected ? 'Deselect all' : 'Select all'}
+              </button>
+              <span className="subtext">{selectedIds.size} selected</span>
+            </div>
+          )}
+
+          {entries.map((e) => {
+            const selected = selectedIds.has(e.id);
+            return (
+              <div
+                key={e.id}
+                role="button"
+                tabIndex={0}
+                className={`history-card${selectionMode ? ' history-card-selectable' : ''}${selected ? ' history-card-selected' : ''}`}
+                onClick={() => handleCardClick(e)}
+                onKeyDown={(ev) => handleCardKeyDown(ev, e)}
+              >
+                <div className="history-card-row">
+                  {selectionMode && (
+                    <input
+                      type="checkbox"
+                      className="history-card-checkbox"
+                      checked={selected}
+                      onChange={() => toggleSelected(e.id)}
+                      onClick={(ev) => ev.stopPropagation()}
+                      aria-label={`Select ${e.title}`}
+                    />
+                  )}
+                  <div style={{ flex: 1 }}>
+                    <p className="history-card-title">{e.title}</p>
+                    <p className="subtext">{formatDate(e.date)}</p>
+                    <p className="subtext">{e.sourcePdfs.join(', ')}</p>
+                    <p className={e.completed ? 'history-score' : 'history-in-progress'}>
+                      {e.completed ? `${e.score} / ${e.total}` : `In progress · ${e.answeredCount}/${e.total} answered`}
+                    </p>
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+
+          {selectionMode ? (
+            <div className="row-gap" style={{ marginTop: 16 }}>
+              <SecondaryButton title="Cancel" onClick={cancelSelection} disabled={deleting} />
+              <SecondaryButton
+                title={`Delete Selected (${selectedIds.size})`}
+                onClick={deleteSelected}
+                disabled={selectedIds.size === 0 || deleting}
+              />
+            </div>
+          ) : (
+            <div className="row-gap" style={{ marginTop: 16 }}>
+              <SecondaryButton title="Select" onClick={startSelection} />
+              <SecondaryButton title="Clear All History" onClick={clearAll} />
+            </div>
+          )}
         </>
       )}
     </div>
