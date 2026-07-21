@@ -1,7 +1,7 @@
-export function PrimaryButton({ title, onClick, disabled, loading, style }) {
+export function PrimaryButton({ title, onClick, disabled, loading, style, type = 'button' }) {
   return (
     <button
-      type="button"
+      type={type}
       className="btn btn-primary"
       style={style}
       onClick={onClick}

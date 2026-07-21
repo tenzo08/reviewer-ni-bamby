@@ -29,12 +29,18 @@
 ## 3. Access gate (recommended, since the URL is now public)
 
 - A simple shared-password check (e.g. a password field on first load,
-  checked against an env var server-side, setting a short-lived signed
-  cookie or token) is enough for a single-user app — this does not need
-  full auth (no Supabase Auth, no user accounts). Keep it lightweight.
+  checked against an env var server-side, returning a token) is enough for
+  a single-user app — this does not need full auth (no Supabase Auth, no
+  user accounts). Keep it lightweight.
 - This exists specifically to stop a stranger who stumbles on the deployed
   URL from generating quizzes against Bambyy's Gemini quota — not to
   protect sensitive data.
+- **Sessions are per-tab and per-device, not global.** The token lives in
+  `sessionStorage`, so closing a tab/browser ends that session and
+  requires re-entering the password next time. This must NOT prevent
+  logging in from a different device or browser at the same time — there
+  is no server-side "single active session" concept to enforce. Multiple
+  devices logged in simultaneously is expected and correct behavior.
 
 ## 4. Feature parity with the mobile version is required
 

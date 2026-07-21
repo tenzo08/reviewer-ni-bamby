@@ -37,7 +37,7 @@ export default function PasswordGate({ onSuccess }) {
           autoFocus
           placeholder="Password"
         />
-        <PrimaryButton title="Continue" loading={submitting} disabled={!password} />
+        <PrimaryButton type="submit" title="Continue" loading={submitting} disabled={!password} />
       </form>
     </div>
   );

@@ -4,7 +4,14 @@ import crypto from 'node:crypto';
 // checked server-side, exchanged for a signed, time-limited bearer token.
 // Not full auth -- no accounts, no per-user identity -- just enough to
 // stop a stranger who finds the deployed URL from burning Gemini quota.
-const TOKEN_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
+//
+// This expiry is a secondary safety net, independent of (not a
+// replacement for) sessionStorage's clears-on-tab-close behavior on the
+// client -- e.g. it still limits how long a token is usable if a browser
+// happens to restore sessionStorage across a crash/restart. Deliberately
+// short relative to the old 30-day value: design.md's own example is "a
+// signed token valid for some number of hours."
+const TOKEN_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
 
 function getSecret() {
   const secret = process.env.ACCESS_PASSWORD;

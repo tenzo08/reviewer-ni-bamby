@@ -10,13 +10,27 @@ same logic), same exit-mid-quiz confirmation.
 
 ## Access gate
 
-On first load, if no valid session token/cookie is present, show a single
+On first load, if no valid session token is present, show a single
 password field ("Enter password to continue"). On submit, `POST
 /api/auth-check` verifies it server-side against an env var and, if
-correct, sets a signed cookie or returns a token stored in
-`localStorage`. Every subsequent `api/*` call includes it; each function
-checks it before doing any real work. Keep this genuinely simple — no
-username, no registration, no password reset flow.
+correct, returns a token. Every subsequent `api/*` call includes it; each
+function checks it before doing any real work. Keep this genuinely simple
+— no username, no registration, no password reset flow.
+
+**Session scope (important):** the token is stored in `sessionStorage`,
+not `localStorage`. This means:
+- Closing the browser tab/window clears the token — reopening the site in
+  that browser requires the password again. This is intentional: a closed
+  session should genuinely end, not silently persist forever.
+- Each browser/device that logs in gets its own independent token. The
+  backend must NOT enforce "only one active session at a time" — there is
+  no shared session state to invalidate across devices. Bambyy's phone and
+  laptop (or any other device) can be logged in simultaneously, each with
+  its own token, and closing one has no effect on the others.
+- The token itself should still have a reasonable server-side expiry (e.g.
+  a signed token valid for some number of hours) as a secondary safety
+  net, independent of the sessionStorage-clears-on-close behavior — these
+  are two different protections, not substitutes for each other.
 
 ## API base
 

@@ -1,15 +1,22 @@
 const TOKEN_KEY = 'reviewer-ni-bambyy:token';
 
+// sessionStorage, not localStorage (docs/rules.md #3): sessions are
+// per-tab and per-device, not global. Closing the tab/browser must end
+// the session and require the password again next time -- and since
+// sessionStorage is never shared between tabs/windows (let alone across
+// devices), one tab's token being cleared (e.g. on a 401) can no longer
+// silently log out sibling tabs/windows the way a shared localStorage key
+// did.
 export function getToken() {
-  return localStorage.getItem(TOKEN_KEY);
+  return sessionStorage.getItem(TOKEN_KEY);
 }
 
 export function setToken(token) {
-  localStorage.setItem(TOKEN_KEY, token);
+  sessionStorage.setItem(TOKEN_KEY, token);
 }
 
 export function clearToken() {
-  localStorage.removeItem(TOKEN_KEY);
+  sessionStorage.removeItem(TOKEN_KEY);
 }
 
 export async function login(password) {
