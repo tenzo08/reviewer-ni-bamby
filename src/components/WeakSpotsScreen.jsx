@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { apiFetch } from '../lib/apiClient.js';
-import { ErrorBanner, LoadingView, ScreenHeader, formatDate } from './ui.jsx';
+import { AnswerSummary, ErrorBanner, LoadingView, ScreenHeader, formatDate } from './ui.jsx';
 
 export default function WeakSpotsScreen({ goHome }) {
   const [data, setData] = useState(null);
@@ -31,8 +31,7 @@ export default function WeakSpotsScreen({ goHome }) {
           {data.missedQuestions.map((q, i) => (
             <div key={i} className="review-card">
               <p className="review-question">{q.question}</p>
-              <p className="review-incorrect">Your answer: {q.yourAnswer}</p>
-              <p className="review-correct">Correct answer: {q.correctAnswer}</p>
+              <AnswerSummary q={q} />
               <p className="subtext">{q.explanation}</p>
               <p className="subtext">
                 {q.sourcePdfs.join(', ')} · {formatDate(q.date)}

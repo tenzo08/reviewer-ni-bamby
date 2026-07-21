@@ -5,8 +5,24 @@ import { ErrorBanner, PrimaryButton, SecondaryButton } from './ui.jsx';
 
 const DIFFICULTIES = ['easy', 'medium', 'hard'];
 
-export default function UploadScreen({ navigate, goHome, uploadDraft, setUploadDraft, onQuizGenerated }) {
-  const { newFiles, existingSelected, numQuestions, difficulty } = uploadDraft;
+const QUESTION_TYPES = [
+  { value: 'multipleChoice', label: 'Multiple Choice' },
+  { value: 'trueFalse', label: 'True or False' },
+  { value: 'modifiedTrueFalse', label: 'Modified True or False' },
+  { value: 'identification', label: 'Identification' },
+  { value: 'mixed', label: 'Mixed' },
+];
+
+export default function UploadScreen({
+  navigate,
+  goHome,
+  uploadDraft,
+  setUploadDraft,
+  onQuizGenerated,
+  beginOperation,
+  endOperation,
+}) {
+  const { newFiles, existingSelected, numQuestions, difficulty, questionType } = uploadDraft;
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
   const fileInputRef = useRef(null);
@@ -37,36 +53,51 @@ export default function UploadScreen({ navigate, goHome, uploadDraft, setUploadD
       return;
     }
     setSubmitting(true);
+    const controller = new AbortController();
+    beginOperation(controller);
     try {
       const formData = new FormData();
       for (const f of newFiles) {
         formData.append('files', f, f.name);
       }
       formData.append('existingFilenames', JSON.stringify(existingSelected));
-      formData.append('settings', JSON.stringify({ numQuestions, difficulty }));
+      formData.append('settings', JSON.stringify({ numQuestions, difficulty, questionType }));
       if (Object.keys(duplicateResolution).length > 0) {
         formData.append('duplicateResolution', JSON.stringify(duplicateResolution));
       }
 
       let quiz;
       try {
-        quiz = await apiFetch('/api/generate-quiz', { method: 'POST', formData, timeoutMs: 120000 });
+        quiz = await apiFetch('/api/generate-quiz', {
+          method: 'POST',
+          formData,
+          timeoutMs: 120000,
+          signal: controller.signal,
+        });
       } catch (e) {
+        if (controller.signal.aborted) return;
         if (e.status === 409 && e.data && Array.isArray(e.data.conflicts)) {
           const resolution = { ...duplicateResolution };
           for (const conflict of e.data.conflicts) {
             const choice = await askDuplicateResolution(conflict.filename);
             if (choice === 'cancel') {
               setSubmitting(false);
+              endOperation();
               return;
             }
             resolution[conflict.filename] = choice;
           }
           setSubmitting(false);
+          endOperation();
           return submit(resolution);
         }
         throw e;
       }
+
+      // The user may have confirmed "leave anyway" on the progress-loss
+      // guard while this was in flight -- don't surprise-navigate them
+      // into a quiz they already walked away from.
+      if (controller.signal.aborted) return;
 
       // Register the quiz in history right away (completed: false) so it's
       // resumable even if the tab closes before the quiz is finished.
@@ -76,12 +107,13 @@ export default function UploadScreen({ navigate, goHome, uploadDraft, setUploadD
         // non-fatal: the quiz can still be played, just may not show in history yet
       }
 
-      setUploadDraft({ newFiles: [], existingSelected: [], numQuestions: 5, difficulty: 'medium' });
+      setUploadDraft({ newFiles: [], existingSelected: [], numQuestions: 5, difficulty: 'medium', questionType: 'multipleChoice' });
       onQuizGenerated(quiz, difficulty);
     } catch (e) {
-      setError(e.message);
+      if (!controller.signal.aborted) setError(e.message);
     } finally {
       setSubmitting(false);
+      endOperation();
     }
   };
 
@@ -158,6 +190,20 @@ export default function UploadScreen({ navigate, goHome, uploadDraft, setUploadD
             onClick={() => setUploadDraft((prev) => ({ ...prev, difficulty: d }))}
           >
             {d}
+          </button>
+        ))}
+      </div>
+
+      <p className="section-label">Question type</p>
+      <div className="chip-group">
+        {QUESTION_TYPES.map((t) => (
+          <button
+            type="button"
+            key={t.value}
+            className={`chip${questionType === t.value ? ' active' : ''}`}
+            onClick={() => setUploadDraft((prev) => ({ ...prev, questionType: t.value }))}
+          >
+            {t.label}
           </button>
         ))}
       </div>

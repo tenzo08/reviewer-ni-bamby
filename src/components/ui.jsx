@@ -76,3 +76,42 @@ export function formatPercent(fraction) {
   if (fraction === null || fraction === undefined) return '--';
   return `${Math.round(fraction * 100)}%`;
 }
+
+function normalizeMatch(str) {
+  return String(str ?? '')
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, ' ');
+}
+
+// Type-aware "your answer / correct answer" summary, shared by
+// ReviewMissedScreen, HistoryDetailScreen, and WeakSpotsScreen so a
+// question's answer renders consistently everywhere it can appear --
+// including modifiedTrueFalse's corrective term and identification's
+// plain free-text answer, neither of which fit the old MC-only choice list.
+export function AnswerSummary({ q }) {
+  if (q.type === 'modifiedTrueFalse') {
+    const answerCorrect = q.yourAnswer === q.correctAnswer;
+    const modifiedCorrect =
+      q.modifiedAnswer === undefined || normalizeMatch(q.yourModifiedAnswer) === normalizeMatch(q.modifiedAnswer);
+    return (
+      <>
+        <p className={answerCorrect ? 'review-correct' : 'review-incorrect'}>
+          Your answer: {q.yourAnswer} (correct: {q.correctAnswer})
+        </p>
+        {q.modifiedAnswer !== undefined && (
+          <p className={modifiedCorrect ? 'review-correct' : 'review-incorrect'}>
+            Correct term/reason: {q.modifiedAnswer}
+            {q.yourModifiedAnswer ? ` -- you said: ${q.yourModifiedAnswer}` : ''}
+          </p>
+        )}
+      </>
+    );
+  }
+  return (
+    <>
+      <p className="review-incorrect">Your answer: {q.yourAnswer}</p>
+      <p className="review-correct">Correct answer: {q.correctAnswer}</p>
+    </>
+  );
+}

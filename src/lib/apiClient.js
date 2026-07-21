@@ -29,8 +29,11 @@ export async function login(password) {
 // Shared fetch wrapper for every /api/* call: attaches the access-gate
 // token, handles JSON or FormData bodies, and normalizes errors the same
 // way the mobile app's apiFetch did (err.status / err.data for 409
-// duplicate-conflict handling upstream).
-export async function apiFetch(path, { method = 'GET', json, formData, timeoutMs = 60000 } = {}) {
+// duplicate-conflict handling upstream). An optional external `signal`
+// lets a caller cancel the request early (used by the progress-loss guard
+// to actually stop an in-flight upload/generation when the user confirms
+// leaving, not just hide its loading state).
+export async function apiFetch(path, { method = 'GET', json, formData, timeoutMs = 60000, signal } = {}) {
   const headers = {};
   const token = getToken();
   if (token) headers.Authorization = `Bearer ${token}`;
@@ -45,6 +48,11 @@ export async function apiFetch(path, { method = 'GET', json, formData, timeoutMs
 
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  const onExternalAbort = () => controller.abort();
+  if (signal) {
+    if (signal.aborted) controller.abort();
+    else signal.addEventListener('abort', onExternalAbort);
+  }
   let res;
   try {
     res = await fetch(path, { method, headers, body, signal: controller.signal });
@@ -52,6 +60,7 @@ export async function apiFetch(path, { method = 'GET', json, formData, timeoutMs
     throw new Error('Could not reach the server. Check your connection and try again.');
   } finally {
     clearTimeout(timeout);
+    if (signal) signal.removeEventListener('abort', onExternalAbort);
   }
 
   if (res.status === 401) {

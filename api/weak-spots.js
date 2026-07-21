@@ -21,9 +21,13 @@ export default async function handler(req, res) {
             historyId: entry.id,
             date: entry.date,
             sourcePdfs: entry.sourcePdfs,
+            type: q.type,
             question: q.question,
             yourAnswer: q.yourAnswer,
             correctAnswer: q.correctAnswer,
+            ...(q.modifiedAnswer !== undefined
+              ? { modifiedAnswer: q.modifiedAnswer, yourModifiedAnswer: q.yourModifiedAnswer }
+              : {}),
             explanation: q.explanation,
           });
           for (const src of entry.sourcePdfs) {

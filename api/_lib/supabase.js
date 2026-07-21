@@ -52,20 +52,52 @@ export function generateHistoryId(title) {
   return `${datePart}-${timePart}-${msPart}-${slugify(title)}`;
 }
 
+// Whitespace/case-insensitive comparison, used for identification answers
+// and for the corrective term/reason on modifiedTrueFalse questions.
+function normalizeMatch(str) {
+  return String(str ?? '').trim().toLowerCase().replace(/\s+/g, ' ');
+}
+
+// isCorrect is type-aware: identification uses a fuzzy-free exact (but
+// case/whitespace-insensitive) match; modifiedTrueFalse additionally
+// requires the student's corrective term to match modifiedAnswer whenever
+// correctAnswer is "False"; every other type is a plain string match.
+function computeIsCorrect(q, yourAnswer, yourModifiedAnswer) {
+  if (q.type === 'identification') {
+    return normalizeMatch(yourAnswer) === normalizeMatch(q.correctAnswer);
+  }
+  if (q.type === 'modifiedTrueFalse') {
+    if (yourAnswer !== q.correctAnswer) return false;
+    if (q.correctAnswer === 'False') {
+      return normalizeMatch(yourModifiedAnswer) === normalizeMatch(q.modifiedAnswer);
+    }
+    return true;
+  }
+  return yourAnswer === q.correctAnswer;
+}
+
 // Re-derives score/total/answeredCount/completed/isCorrect from the
 // questions array so a save always reflects reality, even if the caller
 // sent a stale or inconsistent snapshot.
 function normalizeHistoryEntry(entry) {
   const questions = (entry.questions || []).map((q) => {
     const answered = q.yourAnswer !== null && q.yourAnswer !== undefined;
-    return {
+    const yourModifiedAnswer = q.yourModifiedAnswer ?? null;
+    const type = q.type || 'multipleChoice';
+    const normalized = {
+      type,
       question: q.question,
-      choices: q.choices,
       correctAnswer: q.correctAnswer,
       yourAnswer: answered ? q.yourAnswer : null,
-      isCorrect: answered ? q.yourAnswer === q.correctAnswer : null,
+      isCorrect: answered ? computeIsCorrect(q, q.yourAnswer, yourModifiedAnswer) : null,
       explanation: q.explanation,
     };
+    if (q.choices) normalized.choices = q.choices;
+    if (type === 'modifiedTrueFalse' && q.modifiedAnswer !== undefined) {
+      normalized.modifiedAnswer = q.modifiedAnswer;
+      normalized.yourModifiedAnswer = answered ? yourModifiedAnswer : null;
+    }
+    return normalized;
   });
   const total = questions.length;
   const answeredCount = questions.filter((q) => q.yourAnswer !== null).length;

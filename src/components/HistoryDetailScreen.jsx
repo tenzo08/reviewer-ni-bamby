@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { apiFetch } from '../lib/apiClient.js';
 import { useModals } from './Modals.jsx';
-import { ErrorBanner, LoadingView, PrimaryButton, ScreenHeader, SecondaryButton, formatDate } from './ui.jsx';
+import { AnswerSummary, ErrorBanner, LoadingView, PrimaryButton, ScreenHeader, SecondaryButton, formatDate } from './ui.jsx';
 
 export default function HistoryDetailScreen({ historyId, goBack, resumeQuiz }) {
   const [entry, setEntry] = useState(null);
@@ -53,19 +53,29 @@ export default function HistoryDetailScreen({ historyId, goBack, resumeQuiz }) {
       {entry.questions.map((q, i) => (
         <div key={i} className="review-card">
           <p className="review-question">{`Q${i + 1}. ${q.question}`}</p>
-          {q.choices.map((choice) => {
-            const isYourAnswer = choice === q.yourAnswer;
-            const isCorrectAnswer = choice === q.correctAnswer;
-            let className = 'review-choice subtext';
-            if (isCorrectAnswer) className = 'review-choice review-correct';
-            else if (isYourAnswer) className = 'review-choice review-incorrect';
-            return (
-              <span key={choice} className={className}>
-                {isYourAnswer ? '● ' : '○ '}
-                {choice}
-              </span>
-            );
-          })}
+          {q.choices ? (
+            q.choices.map((choice) => {
+              const isYourAnswer = choice === q.yourAnswer;
+              const isCorrectAnswer = choice === q.correctAnswer;
+              let className = 'review-choice subtext';
+              if (isCorrectAnswer) className = 'review-choice review-correct';
+              else if (isYourAnswer) className = 'review-choice review-incorrect';
+              return (
+                <span key={choice} className={className}>
+                  {isYourAnswer ? '● ' : '○ '}
+                  {choice}
+                </span>
+              );
+            })
+          ) : (
+            <AnswerSummary q={q} />
+          )}
+          {q.type === 'modifiedTrueFalse' && q.modifiedAnswer !== undefined && (
+            <p className="subtext">
+              Correct term/reason: <strong>{q.modifiedAnswer}</strong>
+              {q.yourModifiedAnswer ? ` -- you said: ${q.yourModifiedAnswer}` : ''}
+            </p>
+          )}
           <p className="subtext">{q.explanation}</p>
         </div>
       ))}

@@ -1,4 +1,4 @@
-import { ScreenHeader } from './ui.jsx';
+import { AnswerSummary, ScreenHeader } from './ui.jsx';
 
 export default function ReviewMissedScreen({ quiz, goBack }) {
   const missed = quiz.questions.filter((q) => q.isCorrect === false);
@@ -11,8 +11,7 @@ export default function ReviewMissedScreen({ quiz, goBack }) {
         missed.map((q, i) => (
           <div key={i} className="review-card">
             <p className="review-question">{q.question}</p>
-            <p className="review-incorrect">Your answer: {q.yourAnswer}</p>
-            <p className="review-correct">Correct answer: {q.correctAnswer}</p>
+            <AnswerSummary q={q} />
             <p className="subtext">{q.explanation}</p>
           </div>
         ))

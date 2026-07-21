@@ -62,3 +62,26 @@
   dev`) must let Bambyy test the full app locally, including the API
   routes and Supabase calls, before every deploy — mirroring the
   pre-deployment readiness check used for Calcuduko.
+
+## 7. Scan staging is fully client-side until compile
+
+- Nothing in the scan flow (capture, edge-detect/crop, remove, recapture,
+  reorder) may call any `api/*` route. Only the final "Compile PDF" action
+  sends anything to the backend, in one request.
+- Edge detection/perspective correction is a best-effort enhancement, not
+  a hard requirement — if it fails or looks wrong for a given photo, the
+  user must be able to keep the uncropped original rather than being
+  blocked from proceeding.
+
+## 8. Progress-loss guard is scoped, not global
+
+- The navigation-away confirmation applies only while an upload or
+  quiz-generation request is actually in flight. Don't add confirmation
+  dialogs to normal idle navigation between screens — that would be
+  annoying, not protective.
+
+## 9. Mobile responsiveness is required, not optional
+
+- Every screen must be usable on a phone-width browser viewport without
+  horizontal scrolling or unreachable controls. Test at a narrow width
+  (e.g. 375px), not just desktop, before considering any screen done.

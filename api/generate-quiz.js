@@ -2,7 +2,7 @@ import { requireAuth } from './_lib/auth.js';
 import { parseMultipart } from './_lib/multipart.js';
 import { checkSaveConflict } from './_lib/conflict.js';
 import { generateHistoryId, readSavedPdf, safeFilename, savedPdfExists, saveSavedPdf } from './_lib/supabase.js';
-import { generateQuiz } from './_lib/gemini.js';
+import { generateQuiz, toStoredQuestion } from './_lib/gemini.js';
 import { badRequest, sendError } from './_lib/http.js';
 
 export const config = { api: { bodyParser: false } };
@@ -22,6 +22,7 @@ export default async function handler(req, res) {
     const settings = fields.settings ? JSON.parse(fields.settings) : {};
     const numQuestions = Number(settings.numQuestions) || 5;
     const difficulty = settings.difficulty || 'medium';
+    const questionType = settings.questionType || 'multipleChoice';
 
     const namedFiles = uploadedFiles
       .filter((f) => f.fieldname === 'files')
@@ -66,7 +67,7 @@ export default async function handler(req, res) {
       throw badRequest('No PDF files provided.');
     }
 
-    const { title, questions } = await generateQuiz({ files: resolvedFiles, numQuestions, difficulty });
+    const { title, questions } = await generateQuiz({ files: resolvedFiles, numQuestions, difficulty, questionType });
 
     const id = generateHistoryId(title);
     const quiz = {
@@ -78,14 +79,7 @@ export default async function handler(req, res) {
       answeredCount: 0,
       completed: false,
       sourcePdfs: resolvedFiles.map((f) => f.filename),
-      questions: questions.map((q) => ({
-        question: q.question,
-        choices: q.choices,
-        correctAnswer: q.correctAnswer,
-        yourAnswer: null,
-        isCorrect: null,
-        explanation: q.explanation,
-      })),
+      questions: questions.map(toStoredQuestion),
     };
 
     // Nothing written to quiz_history here -- the client calls
