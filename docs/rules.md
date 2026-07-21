@@ -78,6 +78,12 @@
   a hard requirement — if it fails or looks wrong for a given photo, the
   user must be able to keep the uncropped original rather than being
   blocked from proceeding.
+- Image processing state is per-photo, not global. A photo still being
+  processed must never block interaction with any other part of the
+  staging screen (removing/recapturing/reordering other pages, capturing
+  a new page, or compiling once at least one page is ready).
+- Don't preserve an optimization or processing step that adds real
+  latency without real accuracy benefit — cut it rather than defend it.
 
 ## 8. Progress-loss guard is scoped, not global
 
@@ -91,3 +97,17 @@
 - Every screen must be usable on a phone-width browser viewport without
   horizontal scrolling or unreachable controls. Test at a narrow width
   (e.g. 375px), not just desktop, before considering any screen done.
+
+## 10. Compiled scan PDFs must actually work in generate-quiz, verified live
+
+- A compiled scanned PDF is not "done" until a real generate-quiz call
+  against it has been tested and confirmed working end-to-end — archiving
+  the PDF to Storage successfully is not sufficient proof by itself.
+- Images must be compressed/resized to a reasonable size before being
+  embedded into the assembled PDF. Full, uncompressed camera resolution is
+  unnecessary for a page of text and directly risks hitting size/timeout
+  limits.
+- Errors from generate-quiz (Gemini rejection, size limits, timeouts)
+  must be surfaced to the client with enough real detail to distinguish
+  the actual cause — never collapse a specific failure into a generic
+  "something went wrong."

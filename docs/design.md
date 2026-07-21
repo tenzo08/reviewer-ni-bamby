@@ -93,6 +93,31 @@ distinct from a simple capture-then-upload loop:
    scanned document, not a photo taken at an angle. If auto-detection
    fails or looks wrong, the user can fall back to using the photo
    uncropped rather than being blocked.
+
+   **Performance/responsiveness requirements (non-negotiable):**
+   - The heavy WASM/OpenCV module loads **once per scan session**, not
+     once per photo. Loading it fresh for every capture is the likely
+     cause of slow per-photo processing and must be fixed.
+   - Photos are **downscaled before edge detection** runs (detection
+     doesn't need full 8-12MP camera resolution to find four corners
+     accurately) — full-resolution processing is unnecessary cost, not a
+     quality requirement, and should be removed.
+   - Processing happens **off the main thread** (e.g. a Web Worker) or is
+     otherwise structured so the UI never freezes while a photo is being
+     processed. A newly-captured photo shows a per-thumbnail "processing"
+     state (spinner/skeleton on that specific thumbnail) rather than
+     blocking the whole screen.
+   - **Every other control remains usable while any photo is still
+     processing**: removing an already-added page, recapturing a
+     different page, reordering, capturing another new page, and Compile
+     (once at least one page is ready) must all work immediately,
+     regardless of whether some other photo in the list is still being
+     processed. Processing state is per-photo, not global.
+   - If a specific optimization (e.g. a particular OpenCV feature,
+     unnecessary intermediate image conversions, redundant re-processing
+     on every render) is found to add meaningful latency without adding
+     real accuracy, remove it rather than trying to preserve it.
+
 3. **Review/edit the staged pages** — this is the new capability:
    - **Remove** any single page from the list.
    - **Recapture** any single page (retake just that one, replacing it in
@@ -144,6 +169,33 @@ tablet, and desktop — not just "work" at a fixed desktop width. Concretely:
 - Touch targets (buttons, nav cards) stay comfortably tappable on mobile
   (no relying on hover states for anything essential).
 - No horizontal scrolling required anywhere at common phone widths.
+
+## Selective history deletion (new)
+
+The History screen currently only offers "Clear all history" (deletes
+every entry via `DELETE /api/history`). This is too blunt — add the
+ability to remove specific entries without wiping everything:
+
+- An "Edit" / "Select" toggle on the History screen puts the list into
+  selection mode: each entry gets a checkbox (or tap-to-select
+  highlighting), instead of tapping an entry immediately opening its
+  detail view.
+- While in selection mode, a "Delete selected (N)" action appears,
+  enabled once at least one entry is checked. Confirms once
+  ("Delete N quiz result(s)? This can't be undone.") before calling
+  `DELETE /api/history/:id` for each selected entry.
+- "Select all" / "Deselect all" convenience toggle while in this mode.
+- "Clear all history" remains available separately (still its own
+  distinct, more drastic action with its own confirmation wording making
+  clear it removes *everything*, not just what's selected) — it is not
+  replaced by selective deletion, the two coexist as different levels of
+  intent.
+- Exiting selection mode (without deleting) returns to normal browsing
+  with no changes made.
+- Deleting one or more entries must also correctly update anything
+  derived from history that's currently loaded in the session (weak
+  spots pool, analytics numbers) the next time those screens are opened —
+  don't leave stale aggregates referencing deleted entries.
 
 ## What's intentionally NOT changing
 

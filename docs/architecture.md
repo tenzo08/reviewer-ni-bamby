@@ -100,3 +100,31 @@ request only — never written to Storage themselves, only the assembled
 PDF persists (same rule as the mobile version, now enforced by the
 serverless environment's nature anyway, since there's no disk to
 accidentally leave them on).
+
+**Known failure mode (currently being debugged):** generating a quiz from
+a compiled scanned PDF can fail where the same flow works fine for a
+normal uploaded PDF. Suspected causes, in rough likelihood order:
+
+1. **File size**: images embedded at full camera resolution (a phone
+   photo is commonly 3-12MB) across multiple pages can produce an
+   assembled PDF large enough to exceed Gemini's inline-request size
+   limit, or Vercel's request body size limit, or simply take long enough
+   to upload/process that it exceeds Vercel's function execution timeout
+   (the default is short — a few seconds to 10s depending on plan —
+   unless explicitly configured higher via `maxDuration`).
+2. **Image embedding correctness**: `pdf-lib`'s `embedJpg`/`embedPng`
+   need the actual image format to match which method is called — a
+   mismatch (e.g. calling `embedJpg` on a PNG byte stream, or an
+   unexpected format coming from the browser's camera capture) can
+   produce a technically-invalid PDF that some readers tolerate but
+   Gemini's parser rejects.
+3. **Generic/swallowed errors**: if the actual Gemini error (or Vercel
+   timeout, or size-limit rejection) isn't being surfaced to the client,
+   the symptom looks like "can't read this document" with no actionable
+   detail, even though the real cause is one of the above.
+
+Whatever the root cause turns out to be, the fix should include actually
+compressing/resizing images before embedding (there's no reason to keep
+full 12MP camera resolution for a page of text Gemini needs to read), and
+surfacing the real underlying error message to the client rather than a
+generic failure, so future issues are diagnosable without guessing.
