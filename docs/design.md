@@ -41,19 +41,6 @@ just work, in both local dev (`vercel dev` proxies this) and production.
 This entirely eliminates the runtime-config/tunnel-URL class of problems
 from the mobile versions.
 
-## Scan-to-PDF flow (ported from mobile, browser-based capture)
-
-On the upload screen, a "Scan pages" button next to "Choose PDF(s)":
-1. Uses `<input type="file" accept="image/*" capture="environment">` per
-   page (mobile browsers open the camera directly; desktop browsers fall
-   back to a file picker, which is fine and expected).
-2. Repeated captures build a thumbnail list, with remove/reorder controls,
-   same UX as the mobile version.
-3. Filename prompt, then upload to `/api/scan-to-pdf`.
-4. On success, the filename is added to the current upload session's file
-   list exactly like a Previous Files pick — immediately usable in
-   Generate Quiz, indistinguishable from any other saved PDF afterward.
-
 ## API routes (same shapes as every earlier backend version)
 
 - `POST /api/prepare-upload` (new: resolves duplicate-filename conflicts and
@@ -67,7 +54,6 @@ On the upload screen, a "Scan pages" button next to "Choose PDF(s)":
 - `GET /api/weak-spots`
 - `GET /api/analytics`
 - `GET /api/saved-pdfs`, `DELETE /api/saved-pdfs/:filename`
-- `POST /api/scan-to-pdf`
 - `POST /api/auth-check`
 
 Same request/response field names as the mobile version's backend — this
@@ -80,60 +66,14 @@ object with this filename already exist in the `saved-pdfs` Supabase
 Storage bucket" instead of `fs.existsSync`. Resume-quiz is an `upsert` on
 `quiz_history` by `id` instead of overwriting two local files.
 
-## Scan-to-PDF flow (revised: staging area, not a straight-through loop)
+## Camera-based scanning: removed
 
-On the upload screen, "Scan pages" opens a **scan staging screen** —
-distinct from a simple capture-then-upload loop:
-
-1. **Capture**: each tap of "Scan a page" opens the camera, captures one
-   photo, and adds it to a running page list shown as thumbnails in
-   capture order.
-2. **Auto edge detection + perspective correction** (the added feature):
-   before a captured photo is added to the page list, run it through
-   client-side edge detection (e.g. a JS library built on OpenCV.js, such
-   as `jscanify`) to find the document's four corners and apply a
-   perspective-correcting crop, so the page in the thumbnail looks like a
-   scanned document, not a photo taken at an angle. If auto-detection
-   fails or looks wrong, the user can fall back to using the photo
-   uncropped rather than being blocked.
-
-   **Performance/responsiveness requirements (non-negotiable):**
-   - The heavy WASM/OpenCV module loads **once per scan session**, not
-     once per photo. Loading it fresh for every capture is the likely
-     cause of slow per-photo processing and must be fixed.
-   - Photos are **downscaled before edge detection** runs (detection
-     doesn't need full 8-12MP camera resolution to find four corners
-     accurately) — full-resolution processing is unnecessary cost, not a
-     quality requirement, and should be removed.
-   - Processing happens **off the main thread** (e.g. a Web Worker) or is
-     otherwise structured so the UI never freezes while a photo is being
-     processed. A newly-captured photo shows a per-thumbnail "processing"
-     state (spinner/skeleton on that specific thumbnail) rather than
-     blocking the whole screen.
-   - **Every other control remains usable while any photo is still
-     processing**: removing an already-added page, recapturing a
-     different page, reordering, capturing another new page, and Compile
-     (once at least one page is ready) must all work immediately,
-     regardless of whether some other photo in the list is still being
-     processed. Processing state is per-photo, not global.
-   - If a specific optimization (e.g. a particular OpenCV feature,
-     unnecessary intermediate image conversions, redundant re-processing
-     on every render) is found to add meaningful latency without adding
-     real accuracy, remove it rather than trying to preserve it.
-
-3. **Review/edit the staged pages** — this is the new capability:
-   - **Remove** any single page from the list.
-   - **Recapture** any single page (retake just that one, replacing it in
-     place, not appended at the end).
-   - **Reorder** pages (drag or up/down controls).
-   - All of this happens BEFORE anything is uploaded — nothing hits the
-     backend during capture/review, only on final compile.
-4. **Compile**: once satisfied with the page set, a "Compile PDF" action
-   prompts for a filename, then uploads all staged images in their final
-   order to `/api/scan-to-pdf` in one request, exactly as before from the
-   backend's perspective (no API change needed — this is a frontend UX
-   upgrade over the existing endpoint).
-5. Same duplicate-filename handling as any other upload.
+The scan staging screen (capture/edge-detect/crop/reorder/compile,
+formerly here) was deliberately removed in full, along with
+`/api/scan-to-pdf`, the OpenCV/jscanify dependency, and the Web Worker
+that processed captured photos. See rules.md #4's exception. Normal PDF
+upload is the only upload path; it already handles a scanned/photographed
+PDF the user uploads as a file (see architecture.md).
 
 ## Navigation/progress-loss guard (new)
 
@@ -168,7 +108,6 @@ exactly as before:
 Every screen must adapt cleanly across viewport sizes — phone browser,
 tablet, and desktop — not just "work" at a fixed desktop width. Concretely:
 - The 2x2 nav card grid collapses to a single column on narrow viewports.
-- The scan staging thumbnail grid reflows based on available width.
 - Touch targets (buttons, nav cards) stay comfortably tappable on mobile
   (no relying on hover states for anything essential).
 - No horizontal scrolling required anywhere at common phone widths.

@@ -176,10 +176,7 @@ export default function UploadScreen({
         onChange={pickFiles}
       />
 
-      <div className="row-gap">
-        <SecondaryButton title="Pick PDF(s)" onClick={() => fileInputRef.current?.click()} />
-        <SecondaryButton title="Scan Pages" onClick={() => navigate('scanCapture')} />
-      </div>
+      <SecondaryButton title="Pick PDF(s)" onClick={() => fileInputRef.current?.click()} />
       <SecondaryButton title="Use Saved PDFs" onClick={() => navigate('savedPdfs')} style={{ marginTop: 12 }} />
 
       <p className="section-label">Number of questions</p>

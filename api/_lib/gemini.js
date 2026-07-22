@@ -240,10 +240,10 @@ function describeGeminiFailure(err, elapsedMs) {
   }
   const status = err && (err.status || err.statusCode);
   if (status === 413) {
-    return 'The document is too large for Gemini to process. Try fewer scanned pages.';
+    return 'The document is too large for Gemini to process. Try a smaller PDF or fewer pages.';
   }
   if (status === 400) {
-    return 'Gemini rejected the document as malformed or unreadable (HTTP 400). If this is a scanned PDF, try recapturing the affected page(s).';
+    return 'Gemini rejected the document as malformed or unreadable (HTTP 400).';
   }
   if (status === 429) {
     return 'Gemini API rate limit or quota exceeded. Wait a moment and try again.';

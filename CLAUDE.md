@@ -7,8 +7,9 @@ making any changes to the app.
 
 ## 1. Project Identity
 
-**Reviewer ni Bambyy** — turns a PDF (or scanned photos) into an
-interactive quiz, using Google's Gemini API. Single-user (Bambyy).
+**Reviewer ni Bambyy** — turns a PDF (including scanned/photographed
+pages saved as a PDF) into an interactive quiz, using Google's Gemini
+API. Single-user (Bambyy).
 
 **Architecture: deployed website**, same stack pattern as the Calcuduko
 project (`calcuduko-web`): **React + Vite** frontend, **Vercel** hosting
@@ -61,5 +62,7 @@ Before modifying this app, read these documents in this order:
   through the Gemini quota — see rules.md for the exact mechanism.
 - **Feature parity is required**, not a redesign: multi-PDF upload,
   duplicate-file detection, question regeneration, resumable unfinished
-  quizzes, weak spots, analytics, and scan-to-PDF must all carry over
-  exactly as they worked in the mobile version.
+  quizzes, weak spots, and analytics must all carry over exactly as they
+  worked in the mobile version. **Exception:** camera-based scan-to-PDF
+  was later removed entirely (see rules.md #4) — normal PDF upload is the
+  only upload path now.

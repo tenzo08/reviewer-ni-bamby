@@ -47,10 +47,15 @@
 - Every feature from the earlier mobile app must work here: multi-PDF
   upload with duplicate detection (Replace/Use Existing/Cancel), single-
   question regeneration, resumable unfinished quizzes (same-id overwrite,
-  not duplicate), weak spots aggregation, analytics, scan-to-PDF (camera
-  capture via the browser, assembled server-side with `pdf-lib`), and
-  Previous Files reuse.
+  not duplicate), weak spots aggregation, analytics, and Previous Files
+  reuse.
 - This is a re-platforming, not a feature cut or a redesign of the UX.
+- **Exception: camera-based scan-to-PDF was deliberately removed.** Normal
+  PDF upload (`<input type="file" accept="application/pdf">`) is the only
+  upload path. It must still correctly handle scanned/photographed PDFs a
+  user already has as a file (Gemini reads these natively via inline PDF
+  data, same as a digitally-typed PDF) -- what's gone is the in-browser
+  camera capture/crop/staging UI, not support for scanned *documents*.
 
 ## 5. Stack consistency with Calcuduko
 
@@ -69,21 +74,13 @@
   routes and Supabase calls, before every deploy — mirroring the
   pre-deployment readiness check used for Calcuduko.
 
-## 7. Scan staging is fully client-side until compile
+## 7. (removed) Scan staging is fully client-side until compile
 
-- Nothing in the scan flow (capture, edge-detect/crop, remove, recapture,
-  reorder) may call any `api/*` route. Only the final "Compile PDF" action
-  sends anything to the backend, in one request.
-- Edge detection/perspective correction is a best-effort enhancement, not
-  a hard requirement — if it fails or looks wrong for a given photo, the
-  user must be able to keep the uncropped original rather than being
-  blocked from proceeding.
-- Image processing state is per-photo, not global. A photo still being
-  processed must never block interaction with any other part of the
-  staging screen (removing/recapturing/reordering other pages, capturing
-  a new page, or compiling once at least one page is ready).
-- Don't preserve an optimization or processing step that adds real
-  latency without real accuracy benefit — cut it rather than defend it.
+This section described the now-removed camera-based scan-to-PDF staging
+screen (capture/edge-detect/crop/reorder/compile) and its performance
+requirements. Camera-based scanning was deliberately removed in full --
+see rules.md #4's exception. Kept only as a numbering placeholder so
+section references elsewhere in this file don't shift.
 
 ## 8. Progress-loss guard is scoped, not global
 
@@ -98,16 +95,17 @@
   horizontal scrolling or unreachable controls. Test at a narrow width
   (e.g. 375px), not just desktop, before considering any screen done.
 
-## 10. Compiled scan PDFs must actually work in generate-quiz, verified live
+## 10. generate-quiz errors must be surfaced with real detail
 
-- A compiled scanned PDF is not "done" until a real generate-quiz call
-  against it has been tested and confirmed working end-to-end — archiving
-  the PDF to Storage successfully is not sufficient proof by itself.
-- Images must be compressed/resized to a reasonable size before being
-  embedded into the assembled PDF. Full, uncompressed camera resolution is
-  unnecessary for a page of text and directly risks hitting size/timeout
-  limits.
-- Errors from generate-quiz (Gemini rejection, size limits, timeouts)
-  must be surfaced to the client with enough real detail to distinguish
-  the actual cause — never collapse a specific failure into a generic
-  "something went wrong."
+- Originally written about compiled scan PDFs specifically; the scan
+  feature is gone (rules.md #4) but the underlying principle applies to
+  every generate-quiz failure, not just that one now-removed case.
+- Errors from generate-quiz (Gemini rejection, size limits, timeouts,
+  malformed/incomplete Gemini responses) must be surfaced to the client
+  with enough real detail to distinguish the actual cause — never collapse
+  a specific failure into a generic "something went wrong."
+- A raw platform-level failure (no JSON body at all -- the request never
+  reached our own try/catch) is a different case from a handled failure
+  inside it; the client-side fallback (apiClient.js) must not describe
+  both with identical wording, since that makes the two indistinguishable
+  from the UI alone.

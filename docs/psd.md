@@ -2,10 +2,10 @@
 
 ## Goal
 
-Let Bambyy upload a PDF (or scan pages with her camera) and get a quiz
-generated from it, from **any device with a browser** — phone, tablet,
-laptop, anyone's computer — via a real deployed URL, with zero dependency
-on her own laptop being on or any process running locally.
+Let Bambyy upload a PDF and get a quiz generated from it, from **any
+device with a browser** — phone, tablet, laptop, anyone's computer — via a
+real deployed URL, with zero dependency on her own laptop being on or any
+process running locally.
 
 ## Non-goals
 
@@ -36,3 +36,6 @@ on her own laptop being on or any process running locally.
   dashboard.
 - Every feature from the mobile version works identically here — this is
   a re-platforming project, success means nothing was lost in the move.
+  **Exception:** camera-based scan-to-PDF was later removed entirely (see
+  rules.md) -- normal PDF upload, including scanned/photographed PDFs a
+  user uploads as a file, is the only upload path.

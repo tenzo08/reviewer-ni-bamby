@@ -21,15 +21,13 @@ const PORT = Number(process.env.LOCAL_API_PORT) || 3001;
 //   dev-server.mjs), regardless of Content-Type. There is no real
 //   `config.api.bodyParser: false` opt-out for plain (non-Next.js) Vercel
 //   Functions -- that convention is Next.js-specific and simply isn't read
-//   by this runtime. The `export const config = { api: { bodyParser:
-//   false } }` left on generate-quiz.js/scan-to-pdf.js is therefore inert
-//   in production, but harmless -- left untouched per this session's rules
-//   (not something that needs fixing, and out of scope to touch anyway).
+//   by this runtime.
 // - After buffering, Vercel replays those bytes back onto `req` (see
-//   `restoreBody`) by monkey-patching `req.read`/`req.on` so a handler
-//   that reads the raw stream itself (api/_lib/multipart.js, via
-//   `req.pipe(busboy)`) still works. This -- not a bodyParser flag -- is
-//   how multipart uploads actually work on real Vercel today.
+//   `restoreBody`) by monkey-patching `req.read`/`req.on`/`req.pipe` so a
+//   handler that reads the raw stream itself still works. Every current
+//   route only reads `req.body` (JSON), but this replay behavior is kept
+//   as general Vercel-runtime parity, not route-specific code, in case a
+//   future route needs the raw stream again.
 // - Vercel's own restoreBody does NOT override req.pipe, only
 //   req.on/req.addListener/req.read. That's not enough here: by the time
 //   restoreBody runs, req's own internal _readableState already recorded
@@ -137,7 +135,6 @@ const routes = [
   ['/api/analytics', 'analytics.js'],
   ['/api/saved-pdfs', 'saved-pdfs.js'],
   ['/api/saved-pdfs/:filename', 'saved-pdfs/[filename].js'],
-  ['/api/scan-to-pdf', 'scan-to-pdf.js'],
 ];
 
 // Same variable names api/_lib/{auth,gemini,supabase}.js already read from

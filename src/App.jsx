@@ -6,7 +6,6 @@ import PasswordGate from './components/PasswordGate.jsx';
 import HomeScreen from './components/HomeScreen.jsx';
 import UploadScreen from './components/UploadScreen.jsx';
 import SavedPdfsScreen from './components/SavedPdfsScreen.jsx';
-import ScanStagingScreen from './components/ScanStagingScreen.jsx';
 import QuizScreen from './components/QuizScreen.jsx';
 import ScoreScreen from './components/ScoreScreen.jsx';
 import ReviewMissedScreen from './components/ReviewMissedScreen.jsx';
@@ -36,12 +35,12 @@ function AppShell() {
   const activeControllerRef = useRef(null);
   const { confirmAsync } = useModals();
 
-  // Handed down to UploadScreen/ScanStagingScreen: call beginOperation()
-  // right before starting an upload/generate-quiz fetch (with the
-  // AbortController driving that fetch's `signal`), and endOperation()
-  // in its `finally` block. This is the only thing that flips `inFlight`
-  // -- regenerate-question, saved-pdfs browsing, etc. never touch it, per
-  // rules.md #8 (scoped, not global).
+  // Handed down to UploadScreen: call beginOperation() right before
+  // starting an upload/generate-quiz fetch (with the AbortController
+  // driving that fetch's `signal`), and endOperation() in its `finally`
+  // block. This is the only thing that flips `inFlight` -- regenerate-
+  // question, saved-pdfs browsing, etc. never touch it, per rules.md #8
+  // (scoped, not global).
   const beginOperation = useCallback((controller) => {
     activeControllerRef.current = controller;
     setInFlight(true);
@@ -101,14 +100,6 @@ function AppShell() {
     navigate('score');
   };
 
-  const handleScanned = (filename) => {
-    setUploadDraft((d) => ({
-      ...d,
-      existingSelected: d.existingSelected.includes(filename) ? d.existingSelected : [...d.existingSelected, filename],
-    }));
-    navigate('upload');
-  };
-
   const resumeQuiz = (entry) => {
     const firstUnanswered = entry.questions.findIndex((q) => q.yourAnswer === null);
     setQuiz(entry);
@@ -133,15 +124,6 @@ function AppShell() {
     case 'savedPdfs':
       return (
         <SavedPdfsScreen goBack={() => navigate('upload')} uploadDraft={uploadDraft} setUploadDraft={setUploadDraft} />
-      );
-    case 'scanCapture':
-      return (
-        <ScanStagingScreen
-          goBack={() => navigate('upload')}
-          onScanned={handleScanned}
-          beginOperation={beginOperation}
-          endOperation={endOperation}
-        />
       );
     case 'quiz':
       return (

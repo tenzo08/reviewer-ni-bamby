@@ -24,12 +24,10 @@ reviewer-ni-bambyy-web/
 │   ├── analytics.js
 │   ├── saved-pdfs.js
 │   ├── saved-pdfs/[filename].js
-│   ├── scan-to-pdf.js
 │   ├── auth-check.js          <- lightweight access-gate check
 │   └── _lib/
 │       ├── supabase.js          <- server-side Supabase client (service role)
-│       ├── gemini.js             <- prompt building + Gemini calls
-│       └── pdfAssembly.js         <- pdf-lib image-to-PDF assembly
+│       └── gemini.js             <- prompt building + Gemini calls
 └── DEPLOYMENT.md             <- pre-deploy readiness checklist, same pattern as Calcuduko's
 ```
 
@@ -108,49 +106,14 @@ decide and document this choice in DEPLOYMENT.md).
    env vars are set, confirm no secret is committed, confirm the build
    succeeds locally before pushing.
 
-## Scan-to-PDF pipeline (ported from the mobile version)
+## Camera-based scanning: removed
 
-```
-Browser: <input type="file" accept="image/*" capture="environment" multiple>
-  or a repeated single-capture loop, matching the mobile app's UX
-  -> POST /api/scan-to-pdf (multipart images[] + filename)
-  -> _lib/pdfAssembly.js (pdf-lib): one PDF, one image per page
-  -> uploaded to Supabase Storage "saved-pdfs" bucket, same duplicate-
-     conflict handling as a normal upload (share the same conflict-check
-     function used by generate-quiz -- don't duplicate that logic)
-  -> response: { filename }
-```
-
-Raw images are processed in the function's memory for the duration of the
-request only — never written to Storage themselves, only the assembled
-PDF persists (same rule as the mobile version, now enforced by the
-serverless environment's nature anyway, since there's no disk to
-accidentally leave them on).
-
-**Known failure mode (currently being debugged):** generating a quiz from
-a compiled scanned PDF can fail where the same flow works fine for a
-normal uploaded PDF. Suspected causes, in rough likelihood order:
-
-1. **File size**: images embedded at full camera resolution (a phone
-   photo is commonly 3-12MB) across multiple pages can produce an
-   assembled PDF large enough to exceed Gemini's inline-request size
-   limit, or Vercel's request body size limit, or simply take long enough
-   to upload/process that it exceeds Vercel's function execution timeout
-   (the default is short — a few seconds to 10s depending on plan —
-   unless explicitly configured higher via `maxDuration`).
-2. **Image embedding correctness**: `pdf-lib`'s `embedJpg`/`embedPng`
-   need the actual image format to match which method is called — a
-   mismatch (e.g. calling `embedJpg` on a PNG byte stream, or an
-   unexpected format coming from the browser's camera capture) can
-   produce a technically-invalid PDF that some readers tolerate but
-   Gemini's parser rejects.
-3. **Generic/swallowed errors**: if the actual Gemini error (or Vercel
-   timeout, or size-limit rejection) isn't being surfaced to the client,
-   the symptom looks like "can't read this document" with no actionable
-   detail, even though the real cause is one of the above.
-
-Whatever the root cause turns out to be, the fix should include actually
-compressing/resizing images before embedding (there's no reason to keep
-full 12MP camera resolution for a page of text Gemini needs to read), and
-surfacing the real underlying error message to the client rather than a
-generic failure, so future issues are diagnosable without guessing.
+The earlier camera-based scan-to-PDF pipeline (browser capture -> client-
+side edge-detect/crop staging screen -> `POST /api/scan-to-pdf` ->
+`pdf-lib` image-to-PDF assembly) was deliberately removed in full --
+see rules.md #4's exception. Normal PDF upload
+(`<input type="file" accept="application/pdf">`) is the only upload path
+now; it already correctly handles a PDF whose pages are scanned/
+photographed images, since Gemini reads the PDF's inline data natively
+regardless of whether its pages are typed text or scanned images -- no
+scan-specific server code was ever needed for that part.

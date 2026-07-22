@@ -78,7 +78,7 @@ auto-deploys.
 ## 5. Function timeout note
 
 Gemini quiz generation can take up to ~60-90s for larger PDFs / more
-questions. `generate-quiz.js`, `regenerate-question.js`, and
-`scan-to-pdf.js` set `export const maxDuration = 60` (seconds). If Vercel's
-plan enforces a lower serverless function timeout than that, either
-upgrade the plan or reduce `numQuestions` on the Upload screen.
+questions. `generate-quiz.js` and `regenerate-question.js` set
+`export const maxDuration = 60` (seconds). If Vercel's plan enforces a
+lower serverless function timeout than that, either upgrade the plan or
+reduce `numQuestions` on the Upload screen.
