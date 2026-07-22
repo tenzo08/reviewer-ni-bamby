@@ -1,4 +1,4 @@
-import { GoogleGenAI } from '@google/genai';
+import { GoogleGenAI, Type } from '@google/genai';
 
 const MODEL = process.env.GEMINI_MODEL || 'gemini-2.5-flash';
 
@@ -72,6 +72,88 @@ function typeShape(type) {
     default:
       throw new Error(`Unknown question type: ${type}`);
   }
+}
+
+// Structural counterpart to typeShape() below: a real JSON Schema handed to
+// Gemini as `responseSchema` (constrained decoding), not just prompt text.
+// This is what actually prevents the collapsed "unexpected response"
+// failure on real-world documents -- prompt-only instructions are just a
+// strong suggestion the model can drift from on a long/complex document;
+// responseSchema makes the shape structurally guaranteed by the API itself
+// (valid JSON, exact array length, required fields, enum values). It can't
+// enforce cross-field semantics (e.g. correctAnswer exactly equalling one
+// of choices verbatim), so normalizeQuestion()'s validation stays in place
+// as a second line of defense.
+function typeSchema(type) {
+  const base = {
+    type: Type.OBJECT,
+    properties: {
+      type: { type: Type.STRING, enum: [type] },
+      question: { type: Type.STRING, minLength: '1' },
+      explanation: { type: Type.STRING, minLength: '1' },
+    },
+  };
+  switch (type) {
+    case 'multipleChoice':
+      return {
+        ...base,
+        properties: {
+          ...base.properties,
+          choices: { type: Type.ARRAY, items: { type: Type.STRING, minLength: '1' }, minItems: '4', maxItems: '4' },
+          correctAnswer: { type: Type.STRING, minLength: '1' },
+        },
+        required: ['type', 'question', 'choices', 'correctAnswer', 'explanation'],
+      };
+    case 'trueFalse':
+      return {
+        ...base,
+        properties: {
+          ...base.properties,
+          choices: { type: Type.ARRAY, items: { type: Type.STRING, enum: ['True', 'False'] }, minItems: '2', maxItems: '2' },
+          correctAnswer: { type: Type.STRING, enum: ['True', 'False'] },
+        },
+        required: ['type', 'question', 'choices', 'correctAnswer', 'explanation'],
+      };
+    case 'modifiedTrueFalse':
+      return {
+        ...base,
+        properties: {
+          ...base.properties,
+          choices: { type: Type.ARRAY, items: { type: Type.STRING, enum: ['True', 'False'] }, minItems: '2', maxItems: '2' },
+          correctAnswer: { type: Type.STRING, enum: ['True', 'False'] },
+          modifiedAnswer: { type: Type.STRING, minLength: '1' },
+        },
+        required: ['type', 'question', 'choices', 'correctAnswer', 'explanation'],
+      };
+    case 'identification':
+      return {
+        ...base,
+        properties: {
+          ...base.properties,
+          correctAnswer: { type: Type.STRING, minLength: '1' },
+        },
+        required: ['type', 'question', 'correctAnswer', 'explanation'],
+      };
+    default:
+      throw new Error(`Unknown question type: ${type}`);
+  }
+}
+
+function buildQuizResponseSchema(types) {
+  const distinctTypes = [...new Set(types)];
+  return {
+    type: Type.OBJECT,
+    properties: {
+      title: { type: Type.STRING, minLength: '1' },
+      questions: {
+        type: Type.ARRAY,
+        minItems: String(types.length),
+        maxItems: String(types.length),
+        items: distinctTypes.length === 1 ? typeSchema(distinctTypes[0]) : { anyOf: distinctTypes.map(typeSchema) },
+      },
+    },
+    required: ['title', 'questions'],
+  };
 }
 
 function buildQuizPrompt({ numQuestions, difficulty, questionType }) {
@@ -175,7 +257,7 @@ function describeGeminiFailure(err, elapsedMs) {
   return 'Quiz generation failed -- could not reach Gemini. Check your connection and try again.';
 }
 
-async function callGemini(promptText, files) {
+async function callGemini(promptText, files, responseSchema, externalSignal) {
   const ai = getClient();
   const contents = [{ text: promptText }, ...filesToParts(files)];
   const totalBase64Bytes = files.reduce((sum, f) => sum + Math.ceil(f.buffer.length / 3) * 4, 0);
@@ -186,12 +268,24 @@ async function callGemini(promptText, files) {
   const startedAt = Date.now();
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), GEMINI_TIMEOUT_MS);
+  // `externalSignal` is tied to the incoming request's own connection (see
+  // generate-quiz.js / regenerate-question.js: req.on('close', ...)) so
+  // that a client-side abort (tab closed, "leave anyway" on the
+  // progress-loss guard) actually cancels the in-flight Gemini call instead
+  // of just abandoning the response -- the function would otherwise keep
+  // running and billing until GEMINI_TIMEOUT_MS regardless of the browser
+  // having already given up.
+  const onExternalAbort = () => controller.abort();
+  if (externalSignal) {
+    if (externalSignal.aborted) controller.abort();
+    else externalSignal.addEventListener('abort', onExternalAbort);
+  }
   let response;
   try {
     response = await ai.models.generateContent({
       model: MODEL,
       contents,
-      config: { responseMimeType: 'application/json', abortSignal: controller.signal },
+      config: { responseMimeType: 'application/json', responseSchema, abortSignal: controller.signal },
     });
     console.log(`[gemini] request succeeded in ${Date.now() - startedAt}ms`);
   } catch (err) {
@@ -201,13 +295,21 @@ async function callGemini(promptText, files) {
     throw badGeminiResponse(describeGeminiFailure(err, elapsedMs));
   } finally {
     clearTimeout(timeout);
+    if (externalSignal) externalSignal.removeEventListener('abort', onExternalAbort);
   }
 
   try {
     return extractJson(response.text);
   } catch (err) {
-    console.error('[gemini] failed to parse response as JSON:', response.text);
-    throw badGeminiResponse('Quiz generation returned an unexpected response. Please try again.');
+    // With responseSchema in place this should be rare (Gemini's
+    // constrained decoding guarantees valid JSON) -- if it still happens,
+    // it means the response was cut off (finishReason MAX_TOKENS is the
+    // likely cause), which is worth telling the user directly rather than
+    // folding into the same message as a shape-validation failure below.
+    console.error(`[gemini] failed to parse response as JSON (finishReason=${response.candidates?.[0]?.finishReason}):`, response.text);
+    throw badGeminiResponse(
+      'Gemini returned a response that could not be parsed as JSON -- this usually means the response was cut off. Try fewer questions or fewer/smaller PDFs.',
+    );
   }
 }
 
@@ -251,25 +353,34 @@ function normalizeQuestion(raw, expectedType) {
   return null;
 }
 
-export async function generateQuiz({ files, numQuestions, difficulty, questionType }) {
+export async function generateQuiz({ files, numQuestions, difficulty, questionType, signal }) {
   const types =
     questionType === 'mixed' ? assignMixedTypes(numQuestions) : Array.from({ length: numQuestions }, () => questionType);
-  const parsed = await callGemini(buildQuizPrompt({ numQuestions, difficulty, questionType }), files);
+  const parsed = await callGemini(buildQuizPrompt({ numQuestions, difficulty, questionType }), files, buildQuizResponseSchema(types), signal);
   if (!parsed || typeof parsed.title !== 'string' || !Array.isArray(parsed.questions) || parsed.questions.length !== numQuestions) {
-    throw badGeminiResponse('Quiz generation returned an unexpected response. Please try again.');
+    const got = parsed && Array.isArray(parsed.questions) ? parsed.questions.length : 0;
+    throw badGeminiResponse(`Gemini returned an incomplete quiz (expected ${numQuestions} question(s), got ${got}). Try fewer questions or fewer/smaller PDFs.`);
   }
   const questions = parsed.questions.map((q, i) => normalizeQuestion(q, types[i]));
-  if (questions.some((q) => q === null)) {
-    throw badGeminiResponse('Quiz generation returned an unexpected response. Please try again.');
+  const badIndex = questions.findIndex((q) => q === null);
+  if (badIndex !== -1) {
+    throw badGeminiResponse(
+      `Gemini returned a malformed question (question ${badIndex + 1} of ${numQuestions} had missing or invalid fields). Please try again.`,
+    );
   }
   return { title: parsed.title, questions };
 }
 
-export async function regenerateQuestion({ files, difficulty, previousQuestions, questionType }) {
-  const parsed = await callGemini(buildRegenerateQuestionPrompt({ difficulty, previousQuestions, questionType }), files);
+export async function regenerateQuestion({ files, difficulty, previousQuestions, questionType, signal }) {
+  const parsed = await callGemini(
+    buildRegenerateQuestionPrompt({ difficulty, previousQuestions, questionType }),
+    files,
+    typeSchema(questionType),
+    signal,
+  );
   const question = normalizeQuestion(parsed, questionType);
   if (!question) {
-    throw badGeminiResponse('Question generation returned an unexpected response. Please try again.');
+    throw badGeminiResponse('Gemini returned a malformed question (missing or invalid fields). Please try again.');
   }
   return question;
 }

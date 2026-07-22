@@ -15,6 +15,7 @@ reviewer-ni-bambyy-web/
 │   └── main.jsx
 ├── api/                      <- Vercel serverless functions (the "backend")
 │   ├── generate-quiz.js
+│   ├── prepare-upload.js
 │   ├── regenerate-question.js
 │   ├── save-quiz-result.js
 │   ├── history.js
@@ -34,19 +35,44 @@ reviewer-ni-bambyy-web/
 
 ## Request flow (generate-quiz)
 
+**Revised (two-step upload, direct to Storage):** the original single-step
+design below sent raw PDF bytes through this function's own request body,
+which turned out to be a real production bug -- Vercel's platform-level
+request body size limit (~4.5MB) rejects the request before the function
+even starts, before any of the app's own try/catch can run, for any PDF
+(scanned or not) large enough to cross it. In-function compression can't
+fix this, since the oversized request never reaches the function at all.
+
 ```
-Browser -> POST /api/generate-quiz (multipart PDFs + settings)
-        -> Vercel serverless function
+Step 1 -- resolve conflicts, get upload URLs (tiny JSON body):
+Browser -> POST /api/prepare-upload { filenames, duplicateResolution }
         -> _lib/supabase.js: check saved-pdfs bucket for filename conflicts
         -> (if conflict, return 409 with conflict list, same as before)
-        -> upload new PDF(s) to Supabase Storage bucket "saved-pdfs"
-        -> _lib/gemini.js: read PDF(s) back as base64, send to Gemini as
-           inline file parts, same prompt-building logic as every earlier
-           version
+        -> for each new (non-conflicting) filename, mint a Supabase
+           Storage signed upload URL (createSignedUploadUrl) -- single-use,
+           expires in 2 hours, requires no Supabase credential to use
+        -> returns { uploads: { [filename]: { useExisting } | { signedUrl, path, token } } }
+
+Step 2 -- browser uploads each new file straight to Storage:
+Browser -> PUT <signedUrl> (raw PDF bytes, direct to Supabase Storage)
+        -> never touches any Vercel function's request body at all,
+           so the ~4.5MB platform limit does not apply regardless of PDF size
+
+Step 3 -- generate the quiz (tiny JSON body, filenames only):
+Browser -> POST /api/generate-quiz { sourcePdfs: [filenames], settings }
+        -> Vercel serverless function
+        -> _lib/supabase.js: read each PDF back from Storage as a buffer
+        -> _lib/gemini.js: send to Gemini as inline file parts, using
+           responseSchema (structured output) so the JSON shape is
+           guaranteed by the API itself, not just prompt instructions
         -> parse Gemini's JSON response into quiz data
         -> returned to browser (nothing written to quiz_history yet --
            that happens on save-quiz-result, same as before)
 ```
+
+`regenerate-question.js` already worked this way (filenames in, read from
+Storage) and needed no change to its upload path -- only generate-quiz's
+original all-in-one multipart upload needed splitting.
 
 ## Why Vercel serverless functions instead of a persistent Express server
 

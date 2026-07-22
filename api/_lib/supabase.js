@@ -210,6 +210,22 @@ export async function saveSavedPdf(filename, buffer) {
   if (error) throw storageError('Could not save the PDF.', error);
 }
 
+// Mints a scoped, single-use upload URL (Supabase-signed, expires after 2
+// hours, requires no API key/auth to use) so the browser can PUT the raw
+// PDF bytes straight to Storage -- bypassing the Vercel function's request
+// body entirely. This is the fix for generate-quiz's 502 on larger PDFs:
+// Vercel's platform-level request body size limit (~4.5MB) applied to the
+// old multipart-through-the-function upload regardless of any in-app
+// compression; a signed Storage upload URL never touches that limit at
+// all, since the file bytes go client -> Supabase directly. No Supabase
+// key of any kind reaches the browser (see docs/rules.md #1) -- only this
+// one-path, one-use signed token, minted here with the service role key.
+export async function createSignedUploadUrl(filename) {
+  const { data, error } = await getClient().storage.from(BUCKET).createSignedUploadUrl(filename, { upsert: true });
+  if (error) throw storageError('Could not prepare upload.', error);
+  return data;
+}
+
 export async function readSavedPdf(filename) {
   const { data, error } = await getClient().storage.from(BUCKET).download(filename);
   if (error) throw storageError('Could not read the saved PDF.', error);

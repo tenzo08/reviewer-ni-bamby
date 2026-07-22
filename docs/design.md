@@ -56,6 +56,9 @@ On the upload screen, a "Scan pages" button next to "Choose PDF(s)":
 
 ## API routes (same shapes as every earlier backend version)
 
+- `POST /api/prepare-upload` (new: resolves duplicate-filename conflicts and
+  returns a signed Supabase Storage upload URL per new file -- see
+  architecture.md's revised generate-quiz request flow)
 - `POST /api/generate-quiz`
 - `POST /api/regenerate-question`
 - `POST /api/save-quiz-result`

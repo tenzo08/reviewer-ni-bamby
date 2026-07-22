@@ -128,6 +128,7 @@ async function addVercelHelpers(req, res, next) {
 const routes = [
   ['/api/auth-check', 'auth-check.js'],
   ['/api/generate-quiz', 'generate-quiz.js'],
+  ['/api/prepare-upload', 'prepare-upload.js'],
   ['/api/regenerate-question', 'regenerate-question.js'],
   ['/api/save-quiz-result', 'save-quiz-result.js'],
   ['/api/history', 'history.js'],

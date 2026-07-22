@@ -82,10 +82,47 @@ export async function apiFetch(path, { method = 'GET', json, formData, timeoutMs
   }
 
   if (!res.ok) {
-    const err = new Error((data && data.error) || `Request failed (${res.status})`);
+    // A real JSON error body from our own routes always wins (specific,
+    // safe-to-show message per docs/rules.md #10). When there's no body at
+    // all -- a raw platform-level failure that never reached our own
+    // try/catch -- fall back to something that still tells a real story
+    // instead of one hardcoded string for every possible cause.
+    let message = data && data.error;
+    if (!message) {
+      if (res.status === 504) {
+        message = `The server timed out handling this request (HTTP 504). Try again, or with fewer/smaller PDFs.`;
+      } else if (res.status >= 500) {
+        message = `The server encountered an unexpected error (HTTP ${res.status}). Please try again.`;
+      } else {
+        message = `Request failed (HTTP ${res.status}${res.statusText ? ' ' + res.statusText : ''}).`;
+      }
+    }
+    const err = new Error(message);
     err.status = res.status;
     err.data = data;
     throw err;
   }
   return data;
+}
+
+// Uploads a File directly to the signed Supabase Storage URL handed back by
+// /api/prepare-upload -- bypasses the Vercel function body entirely, which
+// is what actually avoids the platform's ~4.5MB request size limit for
+// larger PDFs (see api/generate-quiz.js for the full explanation). No
+// Supabase credential of any kind is involved here: the signed URL is a
+// single-use, expiring token minted server-side with the service role key.
+export async function uploadToSignedUrl(signedUrl, file, signal) {
+  const res = await fetch(signedUrl, {
+    method: 'PUT',
+    headers: {
+      'content-type': 'application/pdf',
+      'x-upsert': 'true',
+      'cache-control': 'max-age=3600',
+    },
+    body: file,
+    signal,
+  });
+  if (!res.ok) {
+    throw new Error(`Could not upload ${file.name} (HTTP ${res.status}). Please try again.`);
+  }
 }

@@ -1,13 +1,19 @@
 import { requireAuth } from './_lib/auth.js';
-import { parseMultipart } from './_lib/multipart.js';
-import { checkSaveConflict } from './_lib/conflict.js';
-import { generateHistoryId, readSavedPdf, safeFilename, savedPdfExists, saveSavedPdf } from './_lib/supabase.js';
+import { generateHistoryId, readSavedPdf, safeFilename, savedPdfExists } from './_lib/supabase.js';
 import { generateQuiz, toStoredQuestion } from './_lib/gemini.js';
 import { badRequest, sendError } from './_lib/http.js';
 
-export const config = { api: { bodyParser: false } };
 export const maxDuration = 60;
 
+// By the time this route is called, every source PDF is already sitting in
+// the saved-pdfs Storage bucket -- new uploads got there via a signed URL
+// from /api/prepare-upload (browser -> Supabase Storage directly), and
+// previously-saved files were already there. This route's request body is
+// therefore just filenames + settings, a few hundred bytes regardless of
+// how large the PDFs themselves are, which is what actually fixes the 502:
+// the old flow sent the raw PDF bytes through this function's body, which
+// is subject to Vercel's platform-level request size limit (~4.5MB) no
+// matter how much in-function compression happens afterward.
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
     res.status(405).json({ error: 'Method not allowed' });
@@ -15,45 +21,24 @@ export default async function handler(req, res) {
   }
   if (!requireAuth(req, res)) return;
 
+  // Ties the Gemini call's own AbortController (api/_lib/gemini.js) to this
+  // request's actual connection -- if the client disconnects (tab closed,
+  // progress-loss guard's "leave anyway"), the in-flight Gemini call is
+  // cancelled immediately instead of running to completion regardless.
+  const abortController = new AbortController();
+  req.on('close', () => abortController.abort());
+
   try {
-    const { fields, files: uploadedFiles } = await parseMultipart(req, { maxFileSize: 25 * 1024 * 1024, maxFiles: 10 });
-    const existingFilenames = fields.existingFilenames ? JSON.parse(fields.existingFilenames) : [];
-    const duplicateResolution = fields.duplicateResolution ? JSON.parse(fields.duplicateResolution) : {};
-    const settings = fields.settings ? JSON.parse(fields.settings) : {};
+    const { sourcePdfs, settings = {} } = req.body || {};
+    if (!Array.isArray(sourcePdfs) || sourcePdfs.length === 0) {
+      throw badRequest('No PDF files provided.');
+    }
     const numQuestions = Number(settings.numQuestions) || 5;
     const difficulty = settings.difficulty || 'medium';
     const questionType = settings.questionType || 'multipleChoice';
 
-    const namedFiles = uploadedFiles
-      .filter((f) => f.fieldname === 'files')
-      .map((f) => ({ filename: safeFilename(f.filename), buffer: f.buffer }));
-
-    // Duplicate-file conflict check: any uploaded file whose plain filename
-    // already exists in the saved-pdfs bucket and has no resolution yet
-    // blocks the whole request so the client can prompt Replace / Use
-    // Existing / Cancel.
-    const conflicts = [];
-    for (const file of namedFiles) {
-      const { conflict } = await checkSaveConflict(file.filename, duplicateResolution[file.filename]);
-      if (conflict) conflicts.push({ filename: file.filename });
-    }
-    if (conflicts.length > 0) {
-      res.status(409).json({ conflicts });
-      return;
-    }
-
     const resolvedFiles = [];
-    for (const file of namedFiles) {
-      const { useExisting } = await checkSaveConflict(file.filename, duplicateResolution[file.filename]);
-      if (useExisting) {
-        resolvedFiles.push({ filename: file.filename, buffer: await readSavedPdf(file.filename) });
-      } else {
-        await saveSavedPdf(file.filename, file.buffer);
-        resolvedFiles.push({ filename: file.filename, buffer: file.buffer });
-      }
-    }
-
-    for (const rawFilename of existingFilenames) {
+    for (const rawFilename of sourcePdfs) {
       const filename = safeFilename(rawFilename);
       if (!(await savedPdfExists(filename))) {
         throw badRequest(`Saved PDF not found: ${filename}`);
@@ -63,11 +48,13 @@ export default async function handler(req, res) {
       }
     }
 
-    if (resolvedFiles.length === 0) {
-      throw badRequest('No PDF files provided.');
-    }
-
-    const { title, questions } = await generateQuiz({ files: resolvedFiles, numQuestions, difficulty, questionType });
+    const { title, questions } = await generateQuiz({
+      files: resolvedFiles,
+      numQuestions,
+      difficulty,
+      questionType,
+      signal: abortController.signal,
+    });
 
     const id = generateHistoryId(title);
     const quiz = {

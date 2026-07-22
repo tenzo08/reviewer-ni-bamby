@@ -1,5 +1,5 @@
 import { useRef, useState } from 'react';
-import { apiFetch } from '../lib/apiClient.js';
+import { apiFetch, uploadToSignedUrl } from '../lib/apiClient.js';
 import { useModals } from './Modals.jsx';
 import { ErrorBanner, PrimaryButton, SecondaryButton } from './ui.jsx';
 
@@ -56,43 +56,59 @@ export default function UploadScreen({
     const controller = new AbortController();
     beginOperation(controller);
     try {
-      const formData = new FormData();
-      for (const f of newFiles) {
-        formData.append('files', f, f.name);
-      }
-      formData.append('existingFilenames', JSON.stringify(existingSelected));
-      formData.append('settings', JSON.stringify({ numQuestions, difficulty, questionType }));
-      if (Object.keys(duplicateResolution).length > 0) {
-        formData.append('duplicateResolution', JSON.stringify(duplicateResolution));
+      // Step 1: resolve duplicate-filename conflicts and get a signed
+      // Storage upload URL per new file (see api/prepare-upload.js). This
+      // request is tiny (just filenames) regardless of PDF size.
+      if (newFiles.length > 0) {
+        let prep;
+        try {
+          prep = await apiFetch('/api/prepare-upload', {
+            method: 'POST',
+            json: { filenames: newFiles.map((f) => f.name), duplicateResolution },
+            signal: controller.signal,
+          });
+        } catch (e) {
+          if (controller.signal.aborted) return;
+          if (e.status === 409 && e.data && Array.isArray(e.data.conflicts)) {
+            const resolution = { ...duplicateResolution };
+            for (const conflict of e.data.conflicts) {
+              const choice = await askDuplicateResolution(conflict.filename);
+              if (choice === 'cancel') {
+                setSubmitting(false);
+                endOperation();
+                return;
+              }
+              resolution[conflict.filename] = choice;
+            }
+            setSubmitting(false);
+            endOperation();
+            return submit(resolution);
+          }
+          throw e;
+        }
+
+        // Step 2: PUT each new file straight to Supabase Storage using its
+        // signed URL -- this never touches the Vercel function body, which
+        // is what actually avoids the platform's request-size limit for
+        // larger PDFs.
+        for (const f of newFiles) {
+          if (controller.signal.aborted) return;
+          const upload = prep.uploads[f.name];
+          if (!upload || upload.useExisting) continue;
+          await uploadToSignedUrl(upload.signedUrl, f, controller.signal);
+        }
       }
 
-      let quiz;
-      try {
-        quiz = await apiFetch('/api/generate-quiz', {
-          method: 'POST',
-          formData,
-          timeoutMs: 120000,
-          signal: controller.signal,
-        });
-      } catch (e) {
-        if (controller.signal.aborted) return;
-        if (e.status === 409 && e.data && Array.isArray(e.data.conflicts)) {
-          const resolution = { ...duplicateResolution };
-          for (const conflict of e.data.conflicts) {
-            const choice = await askDuplicateResolution(conflict.filename);
-            if (choice === 'cancel') {
-              setSubmitting(false);
-              endOperation();
-              return;
-            }
-            resolution[conflict.filename] = choice;
-          }
-          setSubmitting(false);
-          endOperation();
-          return submit(resolution);
-        }
-        throw e;
-      }
+      if (controller.signal.aborted) return;
+
+      const sourcePdfs = [...newFiles.map((f) => f.name), ...existingSelected];
+
+      const quiz = await apiFetch('/api/generate-quiz', {
+        method: 'POST',
+        json: { sourcePdfs, settings: { numQuestions, difficulty, questionType } },
+        timeoutMs: 120000,
+        signal: controller.signal,
+      });
 
       // The user may have confirmed "leave anyway" on the progress-loss
       // guard while this was in flight -- don't surprise-navigate them

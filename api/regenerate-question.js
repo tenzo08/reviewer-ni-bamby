@@ -14,6 +14,9 @@ export default async function handler(req, res) {
   }
   if (!requireAuth(req, res)) return;
 
+  const abortController = new AbortController();
+  req.on('close', () => abortController.abort());
+
   try {
     const { sourcePdfs, difficulty, previousQuestions, questionType } = req.body || {};
     if (!Array.isArray(sourcePdfs) || sourcePdfs.length === 0) {
@@ -37,6 +40,7 @@ export default async function handler(req, res) {
       difficulty: difficulty || 'medium',
       previousQuestions: Array.isArray(previousQuestions) ? previousQuestions : [],
       questionType,
+      signal: abortController.signal,
     });
 
     res.status(200).json(toStoredQuestion(question));
