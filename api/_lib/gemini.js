@@ -139,6 +139,32 @@ function typeSchema(type) {
   }
 }
 
+// gemini-2.5-flash has "thinking" (extended reasoning) on by default with a
+// dynamic/automatic budget (thinkingBudget -1) -- and thinking tokens are
+// drawn from the SAME pool as maxOutputTokens, not a separate budget. That
+// means an unbounded thinking budget can eat the entire output allowance on
+// a long/dense source PDF regardless of how generous maxOutputTokens looks
+// on paper, truncating the actual JSON mid-object. This -- not simply "no
+// maxOutputTokens was set" -- is why even a small 5-question request on a
+// normal (non-scanned) PDF was hitting this: neither field was being set
+// explicitly at all, so both defaulted, and the automatic thinking budget
+// is not predictable request-to-request. Bounding thinkingBudget to a
+// fixed value AND sizing maxOutputTokens around that fixed budget plus the
+// real JSON payload size is what makes the headroom actually reliable
+// instead of a hopeful guess that happens to work for small requests.
+const THINKING_BUDGET_TOKENS = 2048;
+const BASE_OUTPUT_TOKENS = 1024; // title + JSON structure/punctuation overhead, plus safety margin
+const OUTPUT_TOKENS_PER_QUESTION = 400; // generous per-question estimate (4 choices + explanation)
+const MAX_OUTPUT_TOKENS_CEILING = 32768; // sane hard ceiling regardless of how large numQuestions is
+
+// Scales with the number of questions being requested in *this* call so a
+// 20-30 question request gets proportionally more room, not just enough
+// for the common 5-question case.
+function computeMaxOutputTokens(numQuestions) {
+  const needed = THINKING_BUDGET_TOKENS + BASE_OUTPUT_TOKENS + OUTPUT_TOKENS_PER_QUESTION * Math.max(1, numQuestions);
+  return Math.min(needed, MAX_OUTPUT_TOKENS_CEILING);
+}
+
 function buildQuizResponseSchema(types) {
   const distinctTypes = [...new Set(types)];
   return {
@@ -257,13 +283,13 @@ function describeGeminiFailure(err, elapsedMs) {
   return 'Quiz generation failed -- could not reach Gemini. Check your connection and try again.';
 }
 
-async function callGemini(promptText, files, responseSchema, externalSignal) {
+async function callGemini(promptText, files, responseSchema, externalSignal, maxOutputTokens) {
   const ai = getClient();
   const contents = [{ text: promptText }, ...filesToParts(files)];
   const totalBase64Bytes = files.reduce((sum, f) => sum + Math.ceil(f.buffer.length / 3) * 4, 0);
   console.log(
     `[gemini] sending ${files.length} file(s) to ${MODEL}, raw bytes=${files.reduce((s, f) => s + f.buffer.length, 0)}, ` +
-      `base64 bytes=${totalBase64Bytes} (${(totalBase64Bytes / 1024 / 1024).toFixed(2)}MB)`,
+      `base64 bytes=${totalBase64Bytes} (${(totalBase64Bytes / 1024 / 1024).toFixed(2)}MB), maxOutputTokens=${maxOutputTokens}`,
   );
   const startedAt = Date.now();
   const controller = new AbortController();
@@ -285,7 +311,16 @@ async function callGemini(promptText, files, responseSchema, externalSignal) {
     response = await ai.models.generateContent({
       model: MODEL,
       contents,
-      config: { responseMimeType: 'application/json', responseSchema, abortSignal: controller.signal },
+      config: {
+        responseMimeType: 'application/json',
+        responseSchema,
+        maxOutputTokens,
+        // Bounded, not -1 (automatic) -- see the comment above
+        // computeMaxOutputTokens() for why an unbounded thinking budget is
+        // the real reason this was truncating.
+        thinkingConfig: { thinkingBudget: THINKING_BUDGET_TOKENS },
+        abortSignal: controller.signal,
+      },
     });
     console.log(`[gemini] request succeeded in ${Date.now() - startedAt}ms`);
   } catch (err) {
@@ -298,18 +333,56 @@ async function callGemini(promptText, files, responseSchema, externalSignal) {
     if (externalSignal) externalSignal.removeEventListener('abort', onExternalAbort);
   }
 
+  const candidate = response.candidates?.[0];
+  const finishReason = candidate?.finishReason;
+  const blockReason = response.promptFeedback?.blockReason;
+
+  // A prompt can be rejected before generation even starts (blockReason
+  // set, no candidates at all) -- distinct from a candidate that started
+  // generating and got cut off or filtered. Neither of these produces
+  // `response.text`, but only the latter (MAX_TOKENS, or an ambiguous
+  // empty response with no other explanation) is worth retrying with a
+  // smaller request; the others won't change on retry.
+  if (blockReason) {
+    console.error(`[gemini] prompt blocked before generation: blockReason=${blockReason}`, response.promptFeedback);
+    throw badGeminiResponse(`Gemini declined to process this document (reason: ${blockReason}). Try a different PDF.`);
+  }
+  if (!candidate || !response.text) {
+    console.error(
+      `[gemini] empty response (finishReason=${finishReason}, candidateCount=${response.candidates?.length ?? 0})`,
+    );
+    if (finishReason && finishReason !== 'STOP' && finishReason !== 'MAX_TOKENS') {
+      // SAFETY, RECITATION, OTHER, LANGUAGE, etc -- Gemini stopped for a
+      // reason unrelated to output-token budget, so asking for fewer
+      // questions on retry wouldn't fix it.
+      throw badGeminiResponse(
+        `Gemini declined to generate a full response for this document (reason: ${finishReason}). Try a different PDF.`,
+      );
+    }
+    const emptyErr = badGeminiResponse(
+      'Gemini returned an empty response -- this usually means the response was cut off. Try fewer questions or fewer/smaller PDFs.',
+    );
+    emptyErr.truncated = true;
+    throw emptyErr;
+  }
+
   try {
     return extractJson(response.text);
   } catch (err) {
-    // With responseSchema in place this should be rare (Gemini's
-    // constrained decoding guarantees valid JSON) -- if it still happens,
-    // it means the response was cut off (finishReason MAX_TOKENS is the
-    // likely cause), which is worth telling the user directly rather than
-    // folding into the same message as a shape-validation failure below.
-    console.error(`[gemini] failed to parse response as JSON (finishReason=${response.candidates?.[0]?.finishReason}):`, response.text);
-    throw badGeminiResponse(
+    // With responseSchema + a properly-sized maxOutputTokens in place this
+    // should now be rare -- if it still happens with real (non-empty) text
+    // present, it means the response was cut off mid-token (finishReason
+    // MAX_TOKENS is the likely cause), which is worth telling the user
+    // directly rather than folding into the same message as a shape-
+    // validation failure below. `.truncated` lets generateQuiz() (see
+    // below) decide whether a retry-with-fewer-questions is worth
+    // attempting.
+    console.error(`[gemini] failed to parse response as JSON (finishReason=${finishReason}):`, response.text);
+    const parseErr = badGeminiResponse(
       'Gemini returned a response that could not be parsed as JSON -- this usually means the response was cut off. Try fewer questions or fewer/smaller PDFs.',
     );
+    parseErr.truncated = finishReason === 'MAX_TOKENS';
+    throw parseErr;
   }
 }
 
@@ -353,13 +426,28 @@ function normalizeQuestion(raw, expectedType) {
   return null;
 }
 
-export async function generateQuiz({ files, numQuestions, difficulty, questionType, signal }) {
+async function attemptQuiz({ files, numQuestions, difficulty, questionType, signal }) {
   const types =
     questionType === 'mixed' ? assignMixedTypes(numQuestions) : Array.from({ length: numQuestions }, () => questionType);
-  const parsed = await callGemini(buildQuizPrompt({ numQuestions, difficulty, questionType }), files, buildQuizResponseSchema(types), signal);
+  const parsed = await callGemini(
+    buildQuizPrompt({ numQuestions, difficulty, questionType }),
+    files,
+    buildQuizResponseSchema(types),
+    signal,
+    computeMaxOutputTokens(numQuestions),
+  );
   if (!parsed || typeof parsed.title !== 'string' || !Array.isArray(parsed.questions) || parsed.questions.length !== numQuestions) {
     const got = parsed && Array.isArray(parsed.questions) ? parsed.questions.length : 0;
-    throw badGeminiResponse(`Gemini returned an incomplete quiz (expected ${numQuestions} question(s), got ${got}). Try fewer questions or fewer/smaller PDFs.`);
+    const err = badGeminiResponse(
+      `Gemini returned an incomplete quiz (expected ${numQuestions} question(s), got ${got}). Try fewer questions or fewer/smaller PDFs.`,
+    );
+    // A short array is consistent with the same mid-generation cutoff
+    // extractJson's MAX_TOKENS case catches -- just one that happened to
+    // land on a valid JSON boundary instead of mid-token. A long array
+    // (more than asked for) is a different, non-truncation model error
+    // that asking for fewer questions wouldn't fix.
+    err.truncated = got < numQuestions;
+    throw err;
   }
   const questions = parsed.questions.map((q, i) => normalizeQuestion(q, types[i]));
   const badIndex = questions.findIndex((q) => q === null);
@@ -371,12 +459,30 @@ export async function generateQuiz({ files, numQuestions, difficulty, questionTy
   return { title: parsed.title, questions };
 }
 
+export async function generateQuiz({ files, numQuestions, difficulty, questionType, signal }) {
+  try {
+    return await attemptQuiz({ files, numQuestions, difficulty, questionType, signal });
+  } catch (err) {
+    // Safety net for the rare remaining truncation case (see
+    // computeMaxOutputTokens() above -- expected to be uncommon now, not
+    // the norm): one retry at a reduced question count before giving up.
+    // Every other failure (rate limit, malformed shape, timeout, wrong
+    // question type, etc.) surfaces immediately -- retrying those would
+    // just reproduce the same failure.
+    if (!err.truncated || numQuestions <= 1) throw err;
+    const reduced = Math.max(1, Math.floor(numQuestions / 2));
+    console.warn(`[gemini] quiz generation truncated at ${numQuestions} question(s), retrying once with ${reduced}`);
+    return await attemptQuiz({ files, numQuestions: reduced, difficulty, questionType, signal });
+  }
+}
+
 export async function regenerateQuestion({ files, difficulty, previousQuestions, questionType, signal }) {
   const parsed = await callGemini(
     buildRegenerateQuestionPrompt({ difficulty, previousQuestions, questionType }),
     files,
     typeSchema(questionType),
     signal,
+    computeMaxOutputTokens(1),
   );
   const question = normalizeQuestion(parsed, questionType);
   if (!question) {
