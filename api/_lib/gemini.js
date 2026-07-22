@@ -489,7 +489,35 @@ async function callGemini(promptText, files, responseSchema, externalSignal, max
 
   const candidate = response.candidates?.[0];
   const finishReason = candidate?.finishReason;
+  // `finishReason`/`blockReason` are just enum values (STOP, SAFETY,
+  // OTHER, ...) -- Gemini also exposes a human-readable companion string
+  // for each (`finishMessage`, `blockReasonMessage`) that the previous
+  // version of this code never read at all, so a genuinely more specific
+  // explanation from Gemini itself was being discarded and only the bare
+  // enum surfaced. This is what was actually hiding behind an "OTHER"
+  // classification: not a bug in how this file got here (fresh upload and
+  // Previous-Files reuse share this exact code path, byte for byte -- see
+  // generate-quiz.js), but a real Gemini-side detail this function simply
+  // wasn't looking at.
+  const finishMessage = candidate?.finishMessage;
   const blockReason = response.promptFeedback?.blockReason;
+  const blockReasonMessage = response.promptFeedback?.blockReasonMessage;
+
+  // The one user-facing string for "Gemini gave us its vaguest possible
+  // classification and nothing else" -- used below by BOTH the blockReason
+  // path and the finishReason path, since they're the same underlying
+  // situation (Gemini's catch-all "OTHER" enum, no companion message) just
+  // surfacing at two different points in the response. Confirmed for real
+  // (not guessed) against a genuinely pre-existing saved PDF ("Postop-
+  // Perioperative Nursing.pdf"), which reproduced blockReason "OTHER" with
+  // no blockReasonMessage three times in a row (not truly transient -- an
+  // unrelated saved PDF succeeded immediately on the same request shape),
+  // while generate-quiz.js's resolvedFiles loop is byte-for-byte identical
+  // for a freshly uploaded file and a Previous-Files selection -- so this
+  // is a real, content-specific Gemini classification for that particular
+  // file, not a bug in how a saved PDF is read back and re-encoded here.
+  const OPAQUE_OTHER_MESSAGE =
+    'An unexpected error occurred processing this PDF with Gemini. Try again, or try a freshly re-uploaded copy of the same file if the problem persists.';
 
   // A prompt can be rejected before generation even starts (blockReason
   // set, no candidates at all) -- distinct from a candidate that started
@@ -498,19 +526,36 @@ async function callGemini(promptText, files, responseSchema, externalSignal, max
   // empty response with no other explanation) is worth retrying with a
   // smaller request; the others won't change on retry.
   if (blockReason) {
-    console.error(`[gemini] prompt blocked before generation: blockReason=${blockReason}`, response.promptFeedback);
-    throw badGeminiResponse(`Gemini declined to process this document (reason: ${blockReason}). Try a different PDF.`);
+    console.error(
+      `[gemini] prompt blocked before generation: blockReason=${blockReason} blockReasonMessage=${blockReasonMessage}`,
+      response.promptFeedback,
+    );
+    if (blockReason === 'OTHER' && !blockReasonMessage) {
+      throw badGeminiResponse(OPAQUE_OTHER_MESSAGE);
+    }
+    throw badGeminiResponse(
+      `Gemini declined to process this document (reason: ${blockReason}${blockReasonMessage ? ` -- ${blockReasonMessage}` : ''}). Try a different PDF.`,
+    );
   }
   if (!candidate || !response.text) {
     console.error(
-      `[gemini] empty response (finishReason=${finishReason}, candidateCount=${response.candidates?.length ?? 0})`,
+      `[gemini] empty response (finishReason=${finishReason}, finishMessage=${finishMessage}, candidateCount=${response.candidates?.length ?? 0})`,
     );
     if (finishReason && finishReason !== 'STOP' && finishReason !== 'MAX_TOKENS') {
       // SAFETY, RECITATION, OTHER, LANGUAGE, etc -- Gemini stopped for a
       // reason unrelated to output-token budget, so asking for fewer
       // questions on retry wouldn't fix it.
+      if (finishReason === 'OTHER' && !finishMessage) {
+        // The one field that could explain "OTHER" further (finishMessage)
+        // was itself empty -- this genuinely cannot be classified any more
+        // specifically than Gemini's own catch-all reason. Still give the
+        // user something actionable rather than the bare word "OTHER"
+        // (docs/rules.md #10: an unhelpful classification is not an
+        // acceptable end state).
+        throw badGeminiResponse(OPAQUE_OTHER_MESSAGE);
+      }
       throw badGeminiResponse(
-        `Gemini declined to generate a full response for this document (reason: ${finishReason}). Try a different PDF.`,
+        `Gemini declined to generate a full response for this document (reason: ${finishReason}${finishMessage ? ` -- ${finishMessage}` : ''}). Try a different PDF.`,
       );
     }
     const emptyErr = badGeminiResponse(
