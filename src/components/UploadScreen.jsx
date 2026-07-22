@@ -103,12 +103,35 @@ export default function UploadScreen({
 
       const sourcePdfs = [...newFiles.map((f) => f.name), ...existingSelected];
 
-      const quiz = await apiFetch('/api/generate-quiz', {
-        method: 'POST',
-        json: { sourcePdfs, settings: { numQuestions, difficulty, questionType } },
-        timeoutMs: 120000,
-        signal: controller.signal,
-      });
+      let quiz;
+      try {
+        quiz = await apiFetch('/api/generate-quiz', {
+          method: 'POST',
+          json: { sourcePdfs, settings: { numQuestions, difficulty, questionType } },
+          timeoutMs: 120000,
+          signal: controller.signal,
+        });
+      } catch (e) {
+        if (controller.signal.aborted) return;
+        if (e.status === 400 && e.data && Array.isArray(e.data.oversizedFiles) && e.data.oversizedFiles.length > 0) {
+          // A PDF over the 100-page limit shouldn't block the rest of the
+          // selection (docs/design.md "PDF page count limit") -- remove
+          // just the offending file(s) from the draft so the remaining
+          // valid files are immediately ready to submit again, instead of
+          // leaving the user to figure out which one was the problem.
+          const oversizedNames = new Set(e.data.oversizedFiles.map((f) => f.filename));
+          setUploadDraft((d) => ({
+            ...d,
+            newFiles: d.newFiles.filter((f) => !oversizedNames.has(f.name)),
+            existingSelected: d.existingSelected.filter((name) => !oversizedNames.has(name)),
+          }));
+          setError(e.message);
+          setSubmitting(false);
+          endOperation();
+          return;
+        }
+        throw e;
+      }
 
       // The user may have confirmed "leave anyway" on the progress-loss
       // guard while this was in flight -- don't surprise-navigate them

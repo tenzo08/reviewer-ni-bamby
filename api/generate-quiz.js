@@ -1,9 +1,17 @@
 import { requireAuth } from './_lib/auth.js';
 import { generateHistoryId, readSavedPdf, safeFilename, savedPdfExists } from './_lib/supabase.js';
 import { generateQuiz, toStoredQuestion } from './_lib/gemini.js';
+import { checkPageLimits } from './_lib/pdf.js';
 import { badRequest, sendError } from './_lib/http.js';
 
 export const maxDuration = 60;
+
+// docs/rules.md #11: a hard cap, not a soft warning, applies per-file, and
+// enforced here specifically because this is the one place that already
+// sees every source PDF's bytes (both freshly-uploaded and reused-from-
+// Previous-Files) before Gemini is ever called, regardless of how the file
+// got here.
+const MAX_PDF_PAGES = 100;
 
 // By the time this route is called, every source PDF is already sitting in
 // the saved-pdfs Storage bucket -- new uploads got there via a signed URL
@@ -46,6 +54,16 @@ export default async function handler(req, res) {
       if (!resolvedFiles.some((f) => f.filename === filename)) {
         resolvedFiles.push({ filename, buffer: await readSavedPdf(filename) });
       }
+    }
+
+    // Page-count limit (docs/rules.md #11), checked per-file before any
+    // Gemini call -- see checkPageLimits() for why every file is checked
+    // (not just up to the first offender) and why an unmeasurable file is
+    // skipped rather than blocked.
+    const limitResult = await checkPageLimits(resolvedFiles, MAX_PDF_PAGES);
+    if (limitResult) {
+      res.status(400).json({ error: limitResult.message, oversizedFiles: limitResult.oversizedFiles });
+      return;
     }
 
     const { title, questions } = await generateQuiz({
