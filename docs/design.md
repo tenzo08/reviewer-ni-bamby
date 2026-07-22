@@ -41,11 +41,15 @@ just work, in both local dev (`vercel dev` proxies this) and production.
 This entirely eliminates the runtime-config/tunnel-URL class of problems
 from the mobile versions.
 
+## Camera scanning: REMOVED
+
+The camera-based scan-to-PDF feature (capture, edge detection, staging
+screen, `/api/scan-to-pdf`) has been removed entirely. See the "PDF
+upload must handle scanned documents too" section below for what replaces
+it.
+
 ## API routes (same shapes as every earlier backend version)
 
-- `POST /api/prepare-upload` (new: resolves duplicate-filename conflicts and
-  returns a signed Supabase Storage upload URL per new file -- see
-  architecture.md's revised generate-quiz request flow)
 - `POST /api/generate-quiz`
 - `POST /api/regenerate-question`
 - `POST /api/save-quiz-result`
@@ -66,14 +70,46 @@ object with this filename already exist in the `saved-pdfs` Supabase
 Storage bucket" instead of `fs.existsSync`. Resume-quiz is an `upsert` on
 `quiz_history` by `id` instead of overwriting two local files.
 
-## Camera-based scanning: removed
+## History Detail screen behavior (revised)
 
-The scan staging screen (capture/edge-detect/crop/reorder/compile,
-formerly here) was deliberately removed in full, along with
-`/api/scan-to-pdf`, the OpenCV/jscanify dependency, and the Web Worker
-that processed captured photos. See rules.md #4's exception. Normal PDF
-upload is the only upload path; it already handles a scanned/photographed
-PDF the user uploads as a file (see architecture.md).
+Two corrections to how an unfinished (`completed: false`) entry is shown:
+
+- **"Resume this quiz" is the first thing visible**, above the question
+  list — not scrolled past or buried below other content. For an
+  unfinished entry, resuming is the primary action, not an afterthought.
+- **Correct answers must NOT be shown for any question the student hasn't
+  actually answered yet** (`yourAnswer` is `null`/absent) while the quiz
+  is still unfinished. Showing `correctAnswer` for skipped questions on an
+  in-progress quiz spoils the answer before the student gets to attempt
+  it — this is a real bug, not a display detail. For questions the
+  student *did* answer already (even in an unfinished quiz), showing the
+  correct answer and explanation is fine, same as normal.
+- Once an entry is `completed: true`, this restriction no longer applies
+  — every question's correct answer is visible normally, since the
+  attempt is over.
+
+## PDF upload must handle scanned documents too (replaces camera scanning)
+
+Since camera scanning is removed, the burden shifts entirely to the
+normal upload path: a PDF the user uploads may itself be a scanned
+document (produced by a phone's own camera/scanner app, a flatbed
+scanner, etc.) rather than a digitally-typed one, and Generate Quiz must
+work correctly either way, with no separate code path or user-facing
+distinction between the two.
+
+- No new UI is needed for this — it's the existing "Choose PDF(s)" upload
+  flow, unchanged. There is no "Scan pages" button anymore.
+- Gemini reads PDF pages natively regardless of whether the original
+  content was typed text or a photographed page — this already works for
+  any uploaded PDF via the existing `inline_data` file part approach in
+  `api/_lib/gemini.js`, so no OCR library or separate processing step is
+  needed on the backend either.
+- What DOES matter: large scanned PDFs (multi-page, image-heavy) can be
+  meaningfully bigger than a typical digitally-typed PDF of the same page
+  count. The same size/timeout considerations that applied to the removed
+  camera-compiled PDFs still apply to any large scanned PDF a user
+  uploads directly — don't assume this class of problem went away just
+  because the camera capture UI did.
 
 ## Navigation/progress-loss guard (new)
 
@@ -108,6 +144,7 @@ exactly as before:
 Every screen must adapt cleanly across viewport sizes — phone browser,
 tablet, and desktop — not just "work" at a fixed desktop width. Concretely:
 - The 2x2 nav card grid collapses to a single column on narrow viewports.
+- The scan staging thumbnail grid reflows based on available width.
 - Touch targets (buttons, nav cards) stay comfortably tappable on mobile
   (no relying on hover states for anything essential).
 - No horizontal scrolling required anywhere at common phone widths.
@@ -138,6 +175,26 @@ ability to remove specific entries without wiping everything:
   derived from history that's currently loaded in the session (weak
   spots pool, analytics numbers) the next time those screens are opened —
   don't leave stale aggregates referencing deleted entries.
+
+## PDF page count limit (new)
+
+Any PDF is accepted for upload as long as it's 100 pages or fewer —
+scanned or digitally-typed, no distinction. A PDF over that limit is
+rejected immediately on selection/upload, before any Gemini call:
+
+- The rejection message states the actual page count found and the
+  100-page limit, e.g. "This PDF has 142 pages. The maximum is 100 pages
+  — please split it or choose a shorter document."
+- If checking page count client-side before upload is straightforward
+  (e.g. via a lightweight PDF library that can read the page count
+  without needing the full file processed), do that for instant feedback.
+  Otherwise, a fast server-side check immediately on upload (before
+  archiving to Storage or calling Gemini) is acceptable — the requirement
+  is "rejected before Gemini is called," not "rejected before the file
+  leaves the browser."
+- When multiple PDFs are selected together, each is checked individually;
+  one oversized file among several shouldn't silently block the others —
+  surface which specific file(s) failed the check.
 
 ## What's intentionally NOT changing
 

@@ -48,14 +48,10 @@
   upload with duplicate detection (Replace/Use Existing/Cancel), single-
   question regeneration, resumable unfinished quizzes (same-id overwrite,
   not duplicate), weak spots aggregation, analytics, and Previous Files
-  reuse.
+  reuse. Camera-based scanning was later removed (see section 7) — its
+  replacement requirement is that normal PDF upload correctly handles
+  scanned/photographed content, not that scanning itself is preserved.
 - This is a re-platforming, not a feature cut or a redesign of the UX.
-- **Exception: camera-based scan-to-PDF was deliberately removed.** Normal
-  PDF upload (`<input type="file" accept="application/pdf">`) is the only
-  upload path. It must still correctly handle scanned/photographed PDFs a
-  user already has as a file (Gemini reads these natively via inline PDF
-  data, same as a digitally-typed PDF) -- what's gone is the in-browser
-  camera capture/crop/staging UI, not support for scanned *documents*.
 
 ## 5. Stack consistency with Calcuduko
 
@@ -74,13 +70,14 @@
   routes and Supabase calls, before every deploy — mirroring the
   pre-deployment readiness check used for Calcuduko.
 
-## 7. (removed) Scan staging is fully client-side until compile
+## 7. Camera scanning is removed; uploaded PDFs must handle scanned content
 
-This section described the now-removed camera-based scan-to-PDF staging
-screen (capture/edge-detect/crop/reorder/compile) and its performance
-requirements. Camera-based scanning was deliberately removed in full --
-see rules.md #4's exception. Kept only as a numbering placeholder so
-section references elsewhere in this file don't shift.
+- There is no camera capture, edge detection, or scan staging screen
+  anymore. Users upload a PDF directly, whether it originated as a
+  scanned/photographed document or a typed one — there is no separate
+  code path or UI distinction between the two.
+- Don't reintroduce OpenCV/edge-detection/staging-screen code without an
+  explicit request — this was a deliberate removal, not an oversight.
 
 ## 8. Progress-loss guard is scoped, not global
 
@@ -95,17 +92,55 @@ section references elsewhere in this file don't shift.
   horizontal scrolling or unreachable controls. Test at a narrow width
   (e.g. 375px), not just desktop, before considering any screen done.
 
-## 10. generate-quiz errors must be surfaced with real detail
+## 10. Any uploaded PDF must actually work in generate-quiz, verified live
 
-- Originally written about compiled scan PDFs specifically; the scan
-  feature is gone (rules.md #4) but the underlying principle applies to
-  every generate-quiz failure, not just that one now-removed case.
-- Errors from generate-quiz (Gemini rejection, size limits, timeouts,
-  malformed/incomplete Gemini responses) must be surfaced to the client
-  with enough real detail to distinguish the actual cause — never collapse
-  a specific failure into a generic "something went wrong."
-- A raw platform-level failure (no JSON body at all -- the request never
-  reached our own try/catch) is a different case from a handled failure
-  inside it; the client-side fallback (apiClient.js) must not describe
-  both with identical wording, since that makes the two indistinguishable
-  from the UI alone.
+- A PDF upload is not "done" until a real generate-quiz call against it
+  has been tested and confirmed working end-to-end — archiving the PDF to
+  Storage successfully is not sufficient proof by itself.
+- Large, image-heavy scanned PDFs (uploaded directly by the user, e.g.
+  from their phone's own camera/scanner app) can be significantly bigger
+  than typed PDFs of similar page count — the same size/timeout
+  considerations that applied to the now-removed camera feature still
+  apply here and should not be ignored just because that feature is gone.
+- Errors from generate-quiz (Gemini rejection, size limits, timeouts)
+  must be surfaced to the client with enough real detail to distinguish
+  the actual cause — never collapse a specific failure into a generic
+  "something went wrong."
+
+## 11. Page count limit: 100 pages maximum per PDF
+
+- Any single uploaded PDF must not exceed 100 pages. This is a hard cap,
+  not a soft warning.
+- A PDF over the limit must be rejected with a clear, specific message
+  stating the actual page count and the 100-page limit — before any
+  Gemini call is attempted, not as a failure discovered partway through
+  generation. Wasting a Gemini request on something already known to be
+  rejectable is avoidable and should be avoided.
+- This check applies per-file. If multiple PDFs are selected together for
+  one quiz, each is checked individually against the 100-page limit (this
+  rule is about a single document's size, not a combined-total rule
+  unless a future requirement says otherwise).
+- Scanned/photographed PDFs and digitally-typed PDFs are checked the same
+  way — page count, not file size, is the limit here (file size concerns
+  are already covered separately under rule 10).
+
+## 12. Rate-limit (per-minute) and daily-quota (per-day) Gemini failures must be distinguished
+
+- Gemini's 429 responses cover two genuinely different situations with
+  different recovery times: a per-minute rate limit (clears in roughly a
+  minute) and a per-day quota exhaustion (doesn't clear until the daily
+  reset, currently around midnight Pacific time). Collapsing both into one
+  generic "rate limit or quota exceeded, try again" message is not
+  acceptable — the correct guidance to the user is completely different
+  depending on which one actually happened.
+- Inspect whatever detail Gemini's error response actually provides
+  (status/reason codes, retry-after hints, or distinguishing text) to tell
+  these apart programmatically where possible, rather than guessing from
+  wording alone.
+- The retry logic already added for truncation failures must not also
+  retry on a 429 of either kind — retrying a rate-limited or quota-
+  exhausted request just wastes another attempt against the same wall.
+- Log enough detail server-side on every 429 to later determine, from logs
+  alone, which of the two situations actually occurred — this matters
+  for diagnosing whether the free-tier quota itself is a recurring
+  bottleneck independent of any other bug.

@@ -253,6 +253,78 @@ function extractJson(text) {
 // early lets us return a real, specific error instead.
 const GEMINI_TIMEOUT_MS = 50000;
 
+// The @google/genai SDK's ApiError only exposes `.status` -- there is no
+// `.details`/`.code` property on the error object itself. The full Google
+// API error body (which DOES have the structured detail we need) is
+// JSON.stringify'd into `.message` by the SDK's own throwErrorIfNotOK
+// (see node_modules/@google/genai/dist/node/index.mjs), so it has to be
+// parsed back out. Not every error is an ApiError with a JSON message
+// (network errors, AbortError, etc.), so this returns null rather than
+// throwing when the shape doesn't match.
+function parseGeminiErrorBody(err) {
+  try {
+    const parsed = JSON.parse(err.message);
+    return (parsed && parsed.error) || null;
+  } catch {
+    return null;
+  }
+}
+
+// Distinguishes a per-minute rate limit from a per-day quota exhaustion on
+// a 429 (docs/rules.md #12) using whatever Google's response actually
+// provides, not a guess dressed up as certainty:
+//
+// - The reliable signal: a 429's `error.details` can include a
+//   `type.googleapis.com/google.rpc.QuotaFailure` entry whose
+//   `violations[].quotaId` names the quota explicitly, e.g.
+//   "GenerateRequestsPerDayPerProjectPerModel-FreeTier" -- confirmed
+//   against a real 429 captured while testing this app. A quotaId
+//   containing "PerDay" or "PerMinute" is treated as authoritative.
+// - What this deliberately does NOT do: infer per-minute vs. daily from
+//   `error.details`'s RetryInfo.retryDelay alone. That was the originally
+//   suggested fallback (a short retry-after "strongly suggests" per-
+//   minute), but the one real daily-quota 429 this app has actually
+//   captured reported a retryDelay of ~37-48 seconds -- short, exactly
+//   the range that heuristic would call "per-minute." Since retryDelay
+//   demonstrably does not distinguish the two cases in practice, treating
+//   it as a signal here would be presenting a guess as certain, which
+//   rules.md #12 and this session's instructions both explicitly rule
+//   out. When quotaId doesn't clearly say either way, this returns
+//   'unknown' honestly instead.
+// Exported (alongside describeRateLimit below) purely so this pure,
+// stateless classification logic can be unit-tested against realistic
+// mocked 429 payloads without making a real Gemini API call -- see
+// scripts/test-rate-limit-classification.mjs.
+export function classifyRateLimit(err) {
+  const body = parseGeminiErrorBody(err);
+  const details = Array.isArray(body && body.details) ? body.details : [];
+  const quotaId =
+    details.find((d) => typeof d['@type'] === 'string' && d['@type'].includes('QuotaFailure'))?.violations?.[0]
+      ?.quotaId || null;
+  const retryDelayRaw =
+    details.find((d) => typeof d['@type'] === 'string' && d['@type'].includes('RetryInfo'))?.retryDelay || null;
+  const retryDelaySeconds = retryDelayRaw ? parseFloat(retryDelayRaw) : null;
+
+  if (quotaId && /perday/i.test(quotaId)) return { kind: 'daily', quotaId, retryDelaySeconds };
+  if (quotaId && /perminute/i.test(quotaId)) return { kind: 'perMinute', quotaId, retryDelaySeconds };
+  return { kind: 'unknown', quotaId, retryDelaySeconds };
+}
+
+export function describeRateLimit({ kind }) {
+  if (kind === 'perMinute') {
+    return "You're sending requests too quickly -- wait about a minute and try again.";
+  }
+  if (kind === 'daily') {
+    return 'Daily API limit reached. This resets at midnight Pacific time.';
+  }
+  // Genuinely couldn't tell which one this was (see classifyRateLimit) --
+  // give real guidance without pretending to know.
+  return (
+    "Gemini API rate limit or quota exceeded, and it wasn't possible to tell which from the response. " +
+    "If waiting a minute and retrying doesn't work, it's the daily quota, which resets around midnight Pacific time."
+  );
+}
+
 // Maps whatever the SDK actually threw into a specific, safe-to-show
 // message -- distinguishing size/timeout/rate-limit/server-side causes
 // instead of collapsing every failure into one generic string (docs/
@@ -272,7 +344,7 @@ function describeGeminiFailure(err, elapsedMs) {
     return 'Gemini rejected the document as malformed or unreadable (HTTP 400).';
   }
   if (status === 429) {
-    return 'Gemini API rate limit or quota exceeded. Wait a moment and try again.';
+    return describeRateLimit(classifyRateLimit(err));
   }
   if (status === 503 || status === 500) {
     return "Gemini's service is temporarily unavailable (HTTP " + status + '). Please try again shortly.';
@@ -325,8 +397,25 @@ async function callGemini(promptText, files, responseSchema, externalSignal, max
     console.log(`[gemini] request succeeded in ${Date.now() - startedAt}ms`);
   } catch (err) {
     const elapsedMs = Date.now() - startedAt;
+    const status = err && (err.status || err.statusCode);
     // Never forward the raw SDK error (it can echo request details) to the client.
     console.error(`[gemini] request failed after ${elapsedMs}ms:`, err);
+    if (status === 429) {
+      // Separate, structured log line specifically for the rate-limit/
+      // quota case (docs/rules.md #12: "log enough detail... to later
+      // determine, from logs alone, which of the two situations actually
+      // occurred") -- the console.error above already has the full raw
+      // error, but this makes the classification itself greppable without
+      // having to manually parse that JSON blob every time.
+      const { kind, quotaId, retryDelaySeconds } = classifyRateLimit(err);
+      console.error(`[gemini] 429 classified as kind=${kind} quotaId=${quotaId} retryDelaySeconds=${retryDelaySeconds}`);
+    }
+    // A 429 of either kind is deliberately NOT tagged `.truncated` here --
+    // generateQuiz()'s retry-with-fewer-questions safety net only fires on
+    // that flag, and retrying a rate-limited or quota-exhausted request
+    // would just waste another attempt against the same wall (rules.md
+    // #12). Every path that DOES set `.truncated` lives further down,
+    // after a response was actually received.
     throw badGeminiResponse(describeGeminiFailure(err, elapsedMs));
   } finally {
     clearTimeout(timeout);
