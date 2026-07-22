@@ -45,43 +45,54 @@ export default function HistoryDetailScreen({ historyId, goBack, resumeQuiz }) {
   return (
     <div className="screen">
       <ScreenHeader title={entry.title} subtitle={formatDate(entry.date)} onBack={goBack} />
+      {!entry.completed && (
+        <PrimaryButton title="Resume Quiz" onClick={() => resumeQuiz(entry)} style={{ marginBottom: 16 }} />
+      )}
       <p className="subtext">{entry.sourcePdfs.join(', ')}</p>
       <p className={entry.completed ? 'history-score' : 'history-in-progress'}>
         {entry.completed ? `${entry.score} / ${entry.total}` : `In progress · ${entry.answeredCount}/${entry.total} answered`}
       </p>
 
-      {entry.questions.map((q, i) => (
-        <div key={i} className="review-card">
-          <p className="review-question">{`Q${i + 1}. ${q.question}`}</p>
-          {q.choices ? (
-            q.choices.map((choice) => {
-              const isYourAnswer = choice === q.yourAnswer;
-              const isCorrectAnswer = choice === q.correctAnswer;
-              let className = 'review-choice subtext';
-              if (isCorrectAnswer) className = 'review-choice review-correct';
-              else if (isYourAnswer) className = 'review-choice review-incorrect';
-              return (
-                <span key={choice} className={className}>
-                  {isYourAnswer ? '● ' : '○ '}
-                  {choice}
-                </span>
-              );
-            })
-          ) : (
-            <AnswerSummary q={q} />
-          )}
-          {q.type === 'modifiedTrueFalse' && q.modifiedAnswer !== undefined && (
-            <p className="subtext">
-              Correct term/reason: <strong>{q.modifiedAnswer}</strong>
-              {q.yourModifiedAnswer ? ` -- you said: ${q.yourModifiedAnswer}` : ''}
-            </p>
-          )}
-          <p className="subtext">{q.explanation}</p>
-        </div>
-      ))}
+      {entry.questions.map((q, i) => {
+        // On an unfinished quiz, a question the student hasn't reached yet
+        // must not leak its correct answer/explanation -- only questions
+        // already answered (or the whole quiz being completed) reveal them.
+        const answered = q.yourAnswer !== null && q.yourAnswer !== undefined;
+        const reveal = entry.completed || answered;
+        return (
+          <div key={i} className="review-card">
+            <p className="review-question">{`Q${i + 1}. ${q.question}`}</p>
+            {q.choices ? (
+              q.choices.map((choice) => {
+                const isYourAnswer = choice === q.yourAnswer;
+                const isCorrectAnswer = reveal && choice === q.correctAnswer;
+                let className = 'review-choice subtext';
+                if (isCorrectAnswer) className = 'review-choice review-correct';
+                else if (isYourAnswer) className = 'review-choice review-incorrect';
+                return (
+                  <span key={choice} className={className}>
+                    {isYourAnswer ? '● ' : '○ '}
+                    {choice}
+                  </span>
+                );
+              })
+            ) : reveal ? (
+              <AnswerSummary q={q} />
+            ) : (
+              <p className="subtext">Not yet answered.</p>
+            )}
+            {reveal && q.type === 'modifiedTrueFalse' && q.modifiedAnswer !== undefined && (
+              <p className="subtext">
+                Correct term/reason: <strong>{q.modifiedAnswer}</strong>
+                {q.yourModifiedAnswer ? ` -- you said: ${q.yourModifiedAnswer}` : ''}
+              </p>
+            )}
+            {reveal && <p className="subtext">{q.explanation}</p>}
+          </div>
+        );
+      })}
 
       <div style={{ height: 16 }} />
-      {!entry.completed && <PrimaryButton title="Resume Quiz" onClick={() => resumeQuiz(entry)} style={{ marginBottom: 12 }} />}
       <SecondaryButton title="Delete" onClick={remove} />
     </div>
   );
