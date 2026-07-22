@@ -332,7 +332,10 @@ export function describeRateLimit({ kind }) {
 // we don't want to hand to the client) is always logged server-side via
 // console.error before this runs, so the real cause is still in Vercel's
 // function logs even when the client-facing message stays generic-ish.
-function describeGeminiFailure(err, elapsedMs) {
+// Exported for the same reason as classifyRateLimit/describeRateLimit
+// above: pure enough to unit-test directly against fabricated errors,
+// without a real Gemini call.
+export function describeGeminiFailure(err, elapsedMs) {
   if (err && err.name === 'AbortError') {
     return `Quiz generation timed out after ${Math.round(elapsedMs / 1000)}s. Try fewer pages or a smaller document.`;
   }
@@ -346,13 +349,64 @@ function describeGeminiFailure(err, elapsedMs) {
   if (status === 429) {
     return describeRateLimit(classifyRateLimit(err));
   }
-  if (status === 503 || status === 500) {
-    return "Gemini's service is temporarily unavailable (HTTP " + status + '). Please try again shortly.';
+  if (TRANSIENT_RETRY_STATUS_CODES.includes(status)) {
+    // By the time this is reached, callWithTransientRetry has already
+    // retried this exact request up to 3 times with backoff and still
+    // failed -- worth saying so explicitly, otherwise the user's natural
+    // next move (try again immediately) is exactly what already happened
+    // automatically and didn't help.
+    return (
+      `Google's Gemini service had a temporary issue and didn't recover after retrying (HTTP ${status}). ` +
+      'Please try again in a moment.'
+    );
   }
   if (status) {
     return `Quiz generation failed (Gemini returned HTTP ${status}). Please try again.`;
   }
   return 'Quiz generation failed -- could not reach Gemini. Check your connection and try again.';
+}
+
+// Google's own SDK ships a default retryable-status list based on Cloud
+// Storage's documented retry strategy (see node_modules/@google/genai/dist/
+// node/index.mjs's DEFAULT_RETRY_HTTP_STATUS_CODES: 408, 429, 500, 502,
+// 503, 504) -- but that SDK-level retry is entirely opt-in (only enabled if
+// `httpOptions.retryOptions` is passed to the client, which this app never
+// does, so today NOTHING is ever retried, confirmed by reading that code
+// path directly) and, even if enabled, offers no way to exclude 429 or
+// control backoff timing/attempt count precisely. This app needs 429
+// excluded (rules.md #12: retrying a rate-limited/quota-exhausted request
+// just wastes another attempt against the same wall) and a specific short
+// backoff, so this is a small manual retry wrapper instead, using the same
+// underlying status set minus 429.
+const TRANSIENT_RETRY_STATUS_CODES = [408, 500, 502, 503, 504];
+const TRANSIENT_RETRY_DELAYS_MS = [1000, 2000, 4000]; // up to 3 retries (4 attempts total)
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+// Generic retry wrapper, deliberately independent of the Gemini SDK call
+// itself (`fn` is just "the thing to attempt") so it can be unit-tested
+// with a fake `fn` that simulates failures -- no real network/SDK call
+// needed (see scripts/test-transient-retry.mjs). `sleepFn` is injectable
+// for the same reason: a test can skip real waiting while still asserting
+// on the delay values a real run would have used.
+export async function callWithTransientRetry(fn, { signal, onRetry, sleepFn = sleep } = {}) {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await fn();
+    } catch (err) {
+      const status = err && (err.status || err.statusCode);
+      const isRetryable = TRANSIENT_RETRY_STATUS_CODES.includes(status);
+      const hasRetriesLeft = attempt < TRANSIENT_RETRY_DELAYS_MS.length;
+      if (!isRetryable || !hasRetriesLeft || (signal && signal.aborted)) {
+        throw err;
+      }
+      const delayMs = TRANSIENT_RETRY_DELAYS_MS[attempt];
+      if (onRetry) onRetry({ attempt, status, delayMs });
+      await sleepFn(delayMs);
+    }
+  }
 }
 
 async function callGemini(promptText, files, responseSchema, externalSignal, maxOutputTokens) {
@@ -380,20 +434,31 @@ async function callGemini(promptText, files, responseSchema, externalSignal, max
   }
   let response;
   try {
-    response = await ai.models.generateContent({
-      model: MODEL,
-      contents,
-      config: {
-        responseMimeType: 'application/json',
-        responseSchema,
-        maxOutputTokens,
-        // Bounded, not -1 (automatic) -- see the comment above
-        // computeMaxOutputTokens() for why an unbounded thinking budget is
-        // the real reason this was truncating.
-        thinkingConfig: { thinkingBudget: THINKING_BUDGET_TOKENS },
-        abortSignal: controller.signal,
+    response = await callWithTransientRetry(
+      () =>
+        ai.models.generateContent({
+          model: MODEL,
+          contents,
+          config: {
+            responseMimeType: 'application/json',
+            responseSchema,
+            maxOutputTokens,
+            // Bounded, not -1 (automatic) -- see the comment above
+            // computeMaxOutputTokens() for why an unbounded thinking budget
+            // is the real reason this was truncating.
+            thinkingConfig: { thinkingBudget: THINKING_BUDGET_TOKENS },
+            abortSignal: controller.signal,
+          },
+        }),
+      {
+        signal: controller.signal,
+        onRetry: ({ attempt, status, delayMs }) =>
+          console.warn(
+            `[gemini] transient failure (HTTP ${status}) after ${Date.now() - startedAt}ms, retrying in ${delayMs}ms ` +
+              `(attempt ${attempt + 2} of ${TRANSIENT_RETRY_DELAYS_MS.length + 1})`,
+          ),
       },
-    });
+    );
     console.log(`[gemini] request succeeded in ${Date.now() - startedAt}ms`);
   } catch (err) {
     const elapsedMs = Date.now() - startedAt;
