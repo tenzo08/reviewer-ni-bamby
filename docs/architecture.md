@@ -18,18 +18,25 @@ reviewer-ni-bambyy-web/
 │   ├── prepare-upload.js
 │   ├── regenerate-question.js
 │   ├── save-quiz-result.js
-│   ├── history.js
-│   ├── history/[id].js
+│   ├── compile-pdf.js
+│   ├── history/[[...id]].js     <- GET/DELETE list + GET/DELETE one, one file
 │   ├── weak-spots.js
 │   ├── analytics.js
-│   ├── saved-pdfs.js
-│   ├── saved-pdfs/[filename].js
+│   ├── saved-pdfs/[[...path]].js <- list + delete-one + download-one, one file
 │   ├── auth-check.js          <- lightweight access-gate check
 │   └── _lib/
 │       ├── supabase.js          <- server-side Supabase client (service role)
 │       └── gemini.js             <- prompt building + Gemini calls
 └── DEPLOYMENT.md             <- pre-deploy readiness checklist, same pattern as Calcuduko's
 ```
+
+Vercel's Hobby plan caps a deployment at 12 Serverless Functions, and every
+file under `api/` (except `_lib/`) counts as one -- `history` and
+`saved-pdfs` each consolidate what used to be 2-3 separate files into one,
+using Vercel's optional-catch-all filename convention (`[[...name]].js`) so
+one file can answer both the collection URL and the per-item URL(s). This
+keeps the real function count comfortably under the limit as more routes
+get added over time.
 
 ## Request flow (generate-quiz)
 

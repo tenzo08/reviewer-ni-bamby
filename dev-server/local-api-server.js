@@ -130,13 +130,19 @@ const routes = [
   ['/api/regenerate-question', 'regenerate-question.js'],
   ['/api/save-quiz-result', 'save-quiz-result.js'],
   ['/api/compile-pdf', 'compile-pdf.js'],
-  ['/api/history', 'history.js'],
-  ['/api/history/:id', 'history/[id].js'],
+  // history/[[...id]].js and saved-pdfs/[[...path]].js are each ONE real
+  // file answering multiple URLs (Vercel's optional-catch-all convention),
+  // so multiple entries below intentionally point at the same file --
+  // this table has no other way to express "one function, several paths"
+  // since it's a manual mirror of Vercel's routing, not real file-based
+  // routing itself.
+  ['/api/history', 'history/[[...id]].js'],
+  ['/api/history/:id', 'history/[[...id]].js'],
   ['/api/weak-spots', 'weak-spots.js'],
   ['/api/analytics', 'analytics.js'],
-  ['/api/saved-pdfs', 'saved-pdfs.js'],
-  ['/api/saved-pdfs/:filename/download', 'saved-pdfs/[filename]/download.js'],
-  ['/api/saved-pdfs/:filename', 'saved-pdfs/[filename].js'],
+  ['/api/saved-pdfs', 'saved-pdfs/[[...path]].js'],
+  ['/api/saved-pdfs/:filename/:action', 'saved-pdfs/[[...path]].js'],
+  ['/api/saved-pdfs/:filename', 'saved-pdfs/[[...path]].js'],
 ];
 
 // Same variable names api/_lib/{auth,gemini,supabase}.js already read from
