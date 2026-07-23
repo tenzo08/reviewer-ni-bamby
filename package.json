@@ -10,7 +10,8 @@
     "build": "vite build",
     "preview": "vite preview",
     "test:rate-limit": "node scripts/test-rate-limit-classification.mjs",
-    "test:transient-retry": "node scripts/test-transient-retry.mjs"
+    "test:transient-retry": "node scripts/test-transient-retry.mjs",
+    "test:answer-matching": "node scripts/test-answer-matching.mjs"
   },
   "dependencies": {
     "@google/genai": "^2.12.0",

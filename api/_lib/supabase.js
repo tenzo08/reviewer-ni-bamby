@@ -1,4 +1,5 @@
 import { createClient } from '@supabase/supabase-js';
+import { computeIsCorrect } from '../../shared/answerMatching.js';
 
 const BUCKET = 'saved-pdfs';
 
@@ -50,30 +51,6 @@ export function generateHistoryId(title) {
   const timePart = `${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
   const msPart = pad(now.getMilliseconds(), 3) + pad(Math.floor(Math.random() * 1000), 3);
   return `${datePart}-${timePart}-${msPart}-${slugify(title)}`;
-}
-
-// Whitespace/case-insensitive comparison, used for identification answers
-// and for the corrective term/reason on modifiedTrueFalse questions.
-function normalizeMatch(str) {
-  return String(str ?? '').trim().toLowerCase().replace(/\s+/g, ' ');
-}
-
-// isCorrect is type-aware: identification uses a fuzzy-free exact (but
-// case/whitespace-insensitive) match; modifiedTrueFalse additionally
-// requires the student's corrective term to match modifiedAnswer whenever
-// correctAnswer is "False"; every other type is a plain string match.
-function computeIsCorrect(q, yourAnswer, yourModifiedAnswer) {
-  if (q.type === 'identification') {
-    return normalizeMatch(yourAnswer) === normalizeMatch(q.correctAnswer);
-  }
-  if (q.type === 'modifiedTrueFalse') {
-    if (yourAnswer !== q.correctAnswer) return false;
-    if (q.correctAnswer === 'False') {
-      return normalizeMatch(yourModifiedAnswer) === normalizeMatch(q.modifiedAnswer);
-    }
-    return true;
-  }
-  return yourAnswer === q.correctAnswer;
 }
 
 // Re-derives score/total/answeredCount/completed/isCorrect from the

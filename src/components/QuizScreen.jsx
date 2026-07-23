@@ -2,30 +2,7 @@ import { useEffect, useState } from 'react';
 import { apiFetch } from '../lib/apiClient.js';
 import { useModals } from './Modals.jsx';
 import { ErrorBanner, LoadingView, PrimaryButton, ScreenHeader, SecondaryButton } from './ui.jsx';
-
-function normalizeMatch(str) {
-  return String(str ?? '')
-    .trim()
-    .toLowerCase()
-    .replace(/\s+/g, ' ');
-}
-
-// Mirrors api/_lib/supabase.js's computeIsCorrect exactly, so the
-// immediate local feedback shown here always agrees with what gets
-// persisted server-side on save-quiz-result.
-function computeIsCorrect(question, yourAnswer, yourModifiedAnswer) {
-  if (question.type === 'identification') {
-    return normalizeMatch(yourAnswer) === normalizeMatch(question.correctAnswer);
-  }
-  if (question.type === 'modifiedTrueFalse') {
-    if (yourAnswer !== question.correctAnswer) return false;
-    if (question.correctAnswer === 'False') {
-      return normalizeMatch(yourModifiedAnswer) === normalizeMatch(question.modifiedAnswer);
-    }
-    return true;
-  }
-  return yourAnswer === question.correctAnswer;
-}
+import { computeIsCorrect } from '../../shared/answerMatching.js';
 
 export default function QuizScreen({ quiz, setQuiz, currentIndex, setCurrentIndex, difficulty, goHome, onFinish }) {
   const [regenerating, setRegenerating] = useState(false);

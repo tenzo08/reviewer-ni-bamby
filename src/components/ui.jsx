@@ -1,3 +1,5 @@
+import { answerMatches } from '../../shared/answerMatching.js';
+
 export function PrimaryButton({ title, onClick, disabled, loading, style, type = 'button' }) {
   return (
     <button
@@ -77,13 +79,6 @@ export function formatPercent(fraction) {
   return `${Math.round(fraction * 100)}%`;
 }
 
-function normalizeMatch(str) {
-  return String(str ?? '')
-    .trim()
-    .toLowerCase()
-    .replace(/\s+/g, ' ');
-}
-
 // Type-aware "your answer / correct answer" summary, shared by
 // ReviewMissedScreen, HistoryDetailScreen, and WeakSpotsScreen so a
 // question's answer renders consistently everywhere it can appear --
@@ -92,8 +87,7 @@ function normalizeMatch(str) {
 export function AnswerSummary({ q }) {
   if (q.type === 'modifiedTrueFalse') {
     const answerCorrect = q.yourAnswer === q.correctAnswer;
-    const modifiedCorrect =
-      q.modifiedAnswer === undefined || normalizeMatch(q.yourModifiedAnswer) === normalizeMatch(q.modifiedAnswer);
+    const modifiedCorrect = q.modifiedAnswer === undefined || answerMatches(q.yourModifiedAnswer, q.modifiedAnswer);
     return (
       <>
         <p className={answerCorrect ? 'review-correct' : 'review-incorrect'}>
