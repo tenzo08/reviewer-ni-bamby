@@ -13,6 +13,15 @@ export const maxDuration = 60;
 // got here.
 const MAX_PDF_PAGES = 100;
 
+// 20 questions is a solid quiz size on its own, and 30-question requests
+// were the trigger for a "malformed or unreadable" (HTTP 400) failure on
+// this same PDF that 20 questions doesn't hit -- rather than chase that
+// failure mode, the cap is lowered so it can't be requested at all. The UI
+// already clamps its input to 20; this is the authoritative server-side
+// enforcement of the same cap, consistent with how the page-limit check
+// above is never trusted to the client alone.
+const MAX_QUESTIONS = 20;
+
 // By the time this route is called, every source PDF is already sitting in
 // the saved-pdfs Storage bucket -- new uploads got there via a signed URL
 // from /api/prepare-upload (browser -> Supabase Storage directly), and
@@ -42,6 +51,9 @@ export default async function handler(req, res) {
       throw badRequest('No PDF files provided.');
     }
     const numQuestions = Number(settings.numQuestions) || 5;
+    if (numQuestions > MAX_QUESTIONS) {
+      throw badRequest(`Cannot generate more than ${MAX_QUESTIONS} questions at once (requested ${numQuestions}).`);
+    }
     const difficulty = settings.difficulty || 'medium';
     const questionType = settings.questionType || 'multipleChoice';
 

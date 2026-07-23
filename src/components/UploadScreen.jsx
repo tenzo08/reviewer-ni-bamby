@@ -208,11 +208,11 @@ export default function UploadScreen({
         type="number"
         inputMode="numeric"
         min="1"
-        max="30"
+        max="20"
         value={numQuestions}
         onChange={(e) => {
           const n = parseInt(e.target.value, 10);
-          setUploadDraft((d) => ({ ...d, numQuestions: Number.isNaN(n) ? '' : Math.min(n, 30) }));
+          setUploadDraft((d) => ({ ...d, numQuestions: Number.isNaN(n) ? '' : Math.min(n, 20) }));
         }}
       />
 
