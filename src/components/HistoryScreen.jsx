@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { apiFetch } from '../lib/apiClient.js';
+import { apiFetch, apiFetchBlob } from '../lib/apiClient.js';
 import { useModals } from './Modals.jsx';
 import { ErrorBanner, LoadingView, ScreenHeader, SecondaryButton, formatDate } from './ui.jsx';
 
@@ -10,6 +10,8 @@ export default function HistoryScreen({ navigate, goHome, retakeQuiz }) {
   const [selectedIds, setSelectedIds] = useState(new Set());
   const [deleting, setDeleting] = useState(false);
   const [retakingId, setRetakingId] = useState(null);
+  const [includeAnswers, setIncludeAnswers] = useState(true);
+  const [compiling, setCompiling] = useState(false);
   const { confirmAsync } = useModals();
 
   const load = useCallback(async () => {
@@ -81,6 +83,31 @@ export default function HistoryScreen({ navigate, goHome, retakeQuiz }) {
     setSelectionMode(false);
     setSelectedIds(new Set());
     load();
+  };
+
+  const compileSelected = async () => {
+    const ids = [...selectedIds];
+    if (ids.length === 0) return;
+    setCompiling(true);
+    setError('');
+    try {
+      const blob = await apiFetchBlob('/api/compile-pdf', { method: 'POST', json: { historyIds: ids, includeAnswers } });
+      // The route streams the PDF directly (nothing written to Storage) --
+      // this just hands the browser the resulting blob to save, the same
+      // way a normal file download link would.
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'compiled-quiz.pdf';
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setCompiling(false);
+    }
   };
 
   const retake = async (entry, ev) => {
@@ -178,14 +205,29 @@ export default function HistoryScreen({ navigate, goHome, retakeQuiz }) {
           })}
 
           {selectionMode ? (
-            <div className="row-gap" style={{ marginTop: 16 }}>
-              <SecondaryButton title="Cancel" onClick={cancelSelection} disabled={deleting} />
-              <SecondaryButton
-                title={`Delete Selected (${selectedIds.size})`}
-                onClick={deleteSelected}
-                disabled={selectedIds.size === 0 || deleting}
-              />
-            </div>
+            <>
+              <label className="row-gap" style={{ marginTop: 16, alignItems: 'center' }}>
+                <input
+                  type="checkbox"
+                  checked={includeAnswers}
+                  onChange={(e) => setIncludeAnswers(e.target.checked)}
+                />
+                <span className="subtext">Include answers in compiled PDF</span>
+              </label>
+              <div className="row-gap" style={{ marginTop: 12 }}>
+                <SecondaryButton title="Cancel" onClick={cancelSelection} disabled={deleting || compiling} />
+                <SecondaryButton
+                  title={compiling ? 'Compiling...' : `Compile PDF (${selectedIds.size})`}
+                  onClick={compileSelected}
+                  disabled={selectedIds.size === 0 || deleting || compiling}
+                />
+                <SecondaryButton
+                  title={`Delete Selected (${selectedIds.size})`}
+                  onClick={deleteSelected}
+                  disabled={selectedIds.size === 0 || deleting || compiling}
+                />
+              </div>
+            </>
           ) : (
             <div className="row-gap" style={{ marginTop: 16 }}>
               <SecondaryButton title="Select" onClick={startSelection} />

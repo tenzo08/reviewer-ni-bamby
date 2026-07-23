@@ -129,6 +129,7 @@ const routes = [
   ['/api/prepare-upload', 'prepare-upload.js'],
   ['/api/regenerate-question', 'regenerate-question.js'],
   ['/api/save-quiz-result', 'save-quiz-result.js'],
+  ['/api/compile-pdf', 'compile-pdf.js'],
   ['/api/history', 'history.js'],
   ['/api/history/:id', 'history/[id].js'],
   ['/api/weak-spots', 'weak-spots.js'],

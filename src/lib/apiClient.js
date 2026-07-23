@@ -105,6 +105,43 @@ export async function apiFetch(path, { method = 'GET', json, formData, timeoutMs
   return data;
 }
 
+// Like apiFetch, but for an endpoint that streams a binary response
+// (compile-pdf.js) instead of returning JSON -- returns a Blob on success,
+// still surfaces a real JSON error body on failure exactly like apiFetch
+// does, since a failed request from that route is still plain JSON (the
+// route only switches to `application/pdf` after every entry lookup has
+// already succeeded).
+export async function apiFetchBlob(path, { method = 'GET', json, timeoutMs = 60000 } = {}) {
+  const headers = {};
+  const token = getToken();
+  if (token) headers.Authorization = `Bearer ${token}`;
+  if (json !== undefined) {
+    headers['Content-Type'] = 'application/json';
+  }
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  let res;
+  try {
+    res = await fetch(path, { method, headers, body: json !== undefined ? JSON.stringify(json) : undefined, signal: controller.signal });
+  } catch (e) {
+    throw new Error('Could not reach the server. Check your connection and try again.');
+  } finally {
+    clearTimeout(timeout);
+  }
+
+  if (res.status === 401) clearToken();
+
+  if (!res.ok) {
+    const data = await res.json().catch(() => null);
+    const message = (data && data.error) || `Request failed (HTTP ${res.status}${res.statusText ? ' ' + res.statusText : ''}).`;
+    const err = new Error(message);
+    err.status = res.status;
+    throw err;
+  }
+  return res.blob();
+}
+
 // Uploads a File directly to the signed Supabase Storage URL handed back by
 // /api/prepare-upload -- bypasses the Vercel function body entirely, which
 // is what actually avoids the platform's ~4.5MB request size limit for

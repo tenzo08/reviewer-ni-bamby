@@ -1,0 +1,7 @@
+{
+  "functions": {
+    "api/compile-pdf.js": {
+      "includeFiles": "node_modules/pdfkit/js/data/**"
+    }
+  }
+}
