@@ -116,11 +116,27 @@ async function addVercelHelpers(req, res, next) {
 }
 
 // ---------------------------------------------------------------------------
-// Route table: mirrors Vercel's file-based api/ routing exactly (see
-// docs/architecture.md's repo layout). Bracketed segments ([id],
-// [filename]) become Express :params; their matched value is merged into
-// req.query right before the handler runs, matching how Vercel exposes
-// dynamic route segments to the function.
+// Route table: mirrors Vercel's REAL routing for this project -- plain
+// (non-Next.js) flat api/*.js files, plus vercel.json `rewrites` for
+// history.js and saved-pdfs.js's extra URL shapes (see vercel.json and the
+// comments atop those two files for why: Vercel's double-bracket
+// "optional catch-all" filename convention is Next.js-only and was never
+// recognized for a plain api/ directory, which is what caused a real
+// production 404 despite this same dev server reporting all tests passing
+// under the previous [[...id]].js-based attempt -- this table's mapping of
+// "many routes -> one file" is now expressed via bracket-free Express
+// patterns that mirror Vercel's rewrite `:param` -> query-string
+// forwarding directly, not via any file-naming convention.
+//
+// Known gap (still true even after this fix): this table is a hand-
+// maintained mirror, not derived from vercel.json or Vercel's real
+// resolver -- it cannot itself prove a given route works on Vercel, only
+// that this app's handler logic behaves correctly once a request reaches
+// it. A route can pass every check here and still 404 in production if
+// vercel.json and this table drift apart, or if a future route again
+// leans on a routing convention that isn't actually valid outside
+// Next.js. Cross-check any new dynamic route against Vercel's official
+// docs (or a real `vercel build`/deploy) before trusting this alone.
 // ---------------------------------------------------------------------------
 
 const routes = [
@@ -130,19 +146,13 @@ const routes = [
   ['/api/regenerate-question', 'regenerate-question.js'],
   ['/api/save-quiz-result', 'save-quiz-result.js'],
   ['/api/compile-pdf', 'compile-pdf.js'],
-  // history/[[...id]].js and saved-pdfs/[[...path]].js are each ONE real
-  // file answering multiple URLs (Vercel's optional-catch-all convention),
-  // so multiple entries below intentionally point at the same file --
-  // this table has no other way to express "one function, several paths"
-  // since it's a manual mirror of Vercel's routing, not real file-based
-  // routing itself.
-  ['/api/history', 'history/[[...id]].js'],
-  ['/api/history/:id', 'history/[[...id]].js'],
+  ['/api/history', 'history.js'],
+  ['/api/history/:id', 'history.js'],
   ['/api/weak-spots', 'weak-spots.js'],
   ['/api/analytics', 'analytics.js'],
-  ['/api/saved-pdfs', 'saved-pdfs/[[...path]].js'],
-  ['/api/saved-pdfs/:filename/:action', 'saved-pdfs/[[...path]].js'],
-  ['/api/saved-pdfs/:filename', 'saved-pdfs/[[...path]].js'],
+  ['/api/saved-pdfs', 'saved-pdfs.js'],
+  ['/api/saved-pdfs/:filename/:action', 'saved-pdfs.js'],
+  ['/api/saved-pdfs/:filename', 'saved-pdfs.js'],
 ];
 
 // Same variable names api/_lib/{auth,gemini,supabase}.js already read from

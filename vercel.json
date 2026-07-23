@@ -3,5 +3,19 @@
     "api/compile-pdf.js": {
       "includeFiles": "node_modules/pdfkit/js/data/**"
     }
-  }
+  },
+  "rewrites": [
+    {
+      "source": "/api/saved-pdfs/:filename/:action",
+      "destination": "/api/saved-pdfs"
+    },
+    {
+      "source": "/api/saved-pdfs/:filename",
+      "destination": "/api/saved-pdfs"
+    },
+    {
+      "source": "/api/history/:id",
+      "destination": "/api/history"
+    }
+  ]
 }

@@ -19,24 +19,54 @@ reviewer-ni-bambyy-web/
 │   ├── regenerate-question.js
 │   ├── save-quiz-result.js
 │   ├── compile-pdf.js
-│   ├── history/[[...id]].js     <- GET/DELETE list + GET/DELETE one, one file
+│   ├── history.js             <- GET/DELETE list + GET/DELETE one, one file
 │   ├── weak-spots.js
 │   ├── analytics.js
-│   ├── saved-pdfs/[[...path]].js <- list + delete-one + download-one, one file
+│   ├── saved-pdfs.js          <- list + delete-one + download-one, one file
 │   ├── auth-check.js          <- lightweight access-gate check
 │   └── _lib/
 │       ├── supabase.js          <- server-side Supabase client (service role)
 │       └── gemini.js             <- prompt building + Gemini calls
+├── vercel.json               <- rewrites (see below) + compile-pdf's includeFiles
 └── DEPLOYMENT.md             <- pre-deploy readiness checklist, same pattern as Calcuduko's
 ```
 
 Vercel's Hobby plan caps a deployment at 12 Serverless Functions, and every
-file under `api/` (except `_lib/`) counts as one -- `history` and
-`saved-pdfs` each consolidate what used to be 2-3 separate files into one,
-using Vercel's optional-catch-all filename convention (`[[...name]].js`) so
-one file can answer both the collection URL and the per-item URL(s). This
-keeps the real function count comfortably under the limit as more routes
-get added over time.
+file under `api/` (except `_lib/`) counts as one -- `history.js` and
+`saved-pdfs.js` each answer multiple URLs (list + single-item, and for
+saved-pdfs also a nested download action) from one flat file, keeping the
+real function count comfortably under the limit as more routes get added
+over time.
+
+**How the multi-URL routing actually works (important):** an earlier
+attempt at this consolidation used Vercel's double-bracket "optional
+catch-all" filename convention (`history/[[...id]].js`,
+`saved-pdfs/[[...path]].js`) to let one file answer multiple URLs. That
+convention is Next.js-specific -- a plain (non-Next.js) `api/` directory
+project like this one does not support it, so Vercel's real router never
+recognized either file as matching anything beyond its literal folder
+path, and both endpoints 404'd in production (commit f7e4b52) despite the
+local dev server reporting every test passing. The actual fix: `history.js`
+and `saved-pdfs.js` are ordinary flat files (no bracket folders at all),
+and `vercel.json`'s `rewrites` array routes the extra URL shapes
+(`/api/history/:id`, `/api/saved-pdfs/:filename`,
+`/api/saved-pdfs/:filename/:action`) to those flat files, with the
+captured `:param`s automatically forwarded as query-string parameters --
+this is a universal, framework-agnostic Vercel primitive (see
+[vercel.com/docs/rewrites](https://vercel.com/docs/rewrites)'s own
+`/resize/:width/:height` -> `/api/sharp` example), not tied to any
+router's file-naming conventions the way the bracket approach was.
+
+**Testing gap this exposed:** `dev-server/local-api-server.js` is a
+hand-rolled Express mirror of this routing table, not real file-based
+resolution -- it will happily wire up ANY file path string to ANY Express
+route pattern regardless of whether Vercel's actual router would ever
+recognize that file/pattern as valid. It can verify a route's *handler
+logic* once a request reaches it, but it cannot verify that Vercel would
+route a request there in the first place. Any new dynamic-segment
+convention should be checked against Vercel's official docs (or a real
+deploy) before trusting a passing local-dev-server run as proof it works
+in production.
 
 ## Request flow (generate-quiz)
 
