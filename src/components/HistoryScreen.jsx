@@ -3,12 +3,13 @@ import { apiFetch } from '../lib/apiClient.js';
 import { useModals } from './Modals.jsx';
 import { ErrorBanner, LoadingView, ScreenHeader, SecondaryButton, formatDate } from './ui.jsx';
 
-export default function HistoryScreen({ navigate, goHome }) {
+export default function HistoryScreen({ navigate, goHome, retakeQuiz }) {
   const [entries, setEntries] = useState(null);
   const [error, setError] = useState('');
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState(new Set());
   const [deleting, setDeleting] = useState(false);
+  const [retakingId, setRetakingId] = useState(null);
   const { confirmAsync } = useModals();
 
   const load = useCallback(async () => {
@@ -82,6 +83,23 @@ export default function HistoryScreen({ navigate, goHome }) {
     load();
   };
 
+  const retake = async (entry, ev) => {
+    ev.stopPropagation();
+    setError('');
+    setRetakingId(entry.id);
+    try {
+      // The list view only has summaries (no questions[]) -- fetch the full
+      // entry the same way HistoryDetailScreen does before building the
+      // shuffled retake quiz from it.
+      const full = await apiFetch(`/api/history/${encodeURIComponent(entry.id)}`);
+      retakeQuiz(full);
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setRetakingId(null);
+    }
+  };
+
   const handleCardClick = (entry) => {
     if (selectionMode) {
       toggleSelected(entry.id);
@@ -147,6 +165,13 @@ export default function HistoryScreen({ navigate, goHome }) {
                       {e.completed ? `${e.score} / ${e.total}` : `In progress · ${e.answeredCount}/${e.total} answered`}
                     </p>
                   </div>
+                  {!selectionMode && (
+                    <SecondaryButton
+                      title={retakingId === e.id ? 'Loading...' : 'Retake'}
+                      onClick={(ev) => retake(e, ev)}
+                      disabled={retakingId !== null}
+                    />
+                  )}
                 </div>
               </div>
             );

@@ -1,6 +1,7 @@
 import { useCallback, useRef, useState } from 'react';
 import { getToken, clearToken } from './lib/apiClient.js';
 import { useProgressGuard } from './lib/progressGuard.js';
+import { buildRetakeQuiz } from './lib/retake.js';
 import { ModalProvider, useModals } from './components/Modals.jsx';
 import PasswordGate from './components/PasswordGate.jsx';
 import HomeScreen from './components/HomeScreen.jsx';
@@ -108,6 +109,18 @@ function AppShell() {
     navigate('quiz');
   };
 
+  // Unlike resumeQuiz, this builds a brand-new quiz object (fresh id,
+  // shuffled question/choice order, every answer reset) from a past
+  // entry's full questions -- finishing it calls /api/save-quiz-result with
+  // that new id, which inserts a new quiz_history row rather than
+  // overwriting the original (docs task Part A).
+  const retakeQuiz = (entry) => {
+    setQuiz(buildRetakeQuiz(entry));
+    setDifficulty('medium');
+    setCurrentIndex(0);
+    navigate('quiz');
+  };
+
   switch (screen) {
     case 'upload':
       return (
@@ -142,7 +155,7 @@ function AppShell() {
     case 'reviewMissed':
       return <ReviewMissedScreen quiz={quiz} goBack={() => navigate('score')} />;
     case 'history':
-      return <HistoryScreen navigate={navigate} goHome={goHome} />;
+      return <HistoryScreen navigate={navigate} goHome={goHome} retakeQuiz={retakeQuiz} />;
     case 'historyDetail':
       return <HistoryDetailScreen historyId={screenParams.id} goBack={() => navigate('history')} resumeQuiz={resumeQuiz} />;
     case 'weakSpots':
