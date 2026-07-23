@@ -28,14 +28,40 @@ export default function UploadScreen({
   const fileInputRef = useRef(null);
   const { askDuplicateResolution } = useModals();
 
-  const pickFiles = (e) => {
+  const pickFiles = async (e) => {
     const picked = Array.from(e.target.files || []);
     e.target.value = '';
     if (picked.length === 0) return;
-    setUploadDraft((d) => ({
-      ...d,
-      newFiles: [...d.newFiles, ...picked.filter((p) => !d.newFiles.some((f) => f.name === p.name))],
-    }));
+    setError('');
+
+    const candidates = picked.filter((p) => !newFiles.some((f) => f.name === p.name));
+    if (candidates.length === 0) return;
+
+    // Reused directly from the server side (docs/design.md "PDF page count
+    // limit"): pdf-lib is isomorphic (no Node-only APIs used here), so this
+    // is the exact same page-count logic generate-quiz.js runs
+    // authoritatively -- this client-side call is purely additive instant-
+    // feedback UX, never a replacement; the server-side check is untouched.
+    // Dynamically imported so pdf-lib (a genuinely large dependency) only
+    // loads when a file is actually picked, not in the initial bundle.
+    const { checkPageLimits } = await import('../../api/_lib/pdf.js');
+
+    // Read each candidate's page count before it ever gets added to the
+    // draft -- an oversized file skips the upload/Storage round-trip
+    // entirely, not just the eventual Gemini call. Each file is checked
+    // individually: one oversized file among several must not block the
+    // rest from being accepted.
+    const withBuffers = await Promise.all(
+      candidates.map(async (f) => ({ filename: f.name, buffer: new Uint8Array(await f.arrayBuffer()), file: f })),
+    );
+    const limitResult = await checkPageLimits(withBuffers);
+    const oversizedNames = new Set((limitResult?.oversizedFiles || []).map((f) => f.filename));
+    if (limitResult) setError(limitResult.message);
+
+    const accepted = withBuffers.filter((f) => !oversizedNames.has(f.filename)).map((f) => f.file);
+    if (accepted.length > 0) {
+      setUploadDraft((d) => ({ ...d, newFiles: [...d.newFiles, ...accepted] }));
+    }
   };
 
   const removeNewFile = (name) => {
