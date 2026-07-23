@@ -134,6 +134,7 @@ const routes = [
   ['/api/weak-spots', 'weak-spots.js'],
   ['/api/analytics', 'analytics.js'],
   ['/api/saved-pdfs', 'saved-pdfs.js'],
+  ['/api/saved-pdfs/:filename/download', 'saved-pdfs/[filename]/download.js'],
   ['/api/saved-pdfs/:filename', 'saved-pdfs/[filename].js'],
 ];
 

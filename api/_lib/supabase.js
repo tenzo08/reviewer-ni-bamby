@@ -203,6 +203,16 @@ export async function createSignedUploadUrl(filename) {
   return data;
 }
 
+// Mints a fresh, short-lived signed GET URL for downloading a saved PDF
+// (docs task Part C / rules.md: "the saved-pdfs Storage bucket stays
+// private... never long-lived/cached, never public"). Called fresh on every
+// request from the download route below -- never stored or reused.
+export async function createSignedDownloadUrl(filename, expiresInSeconds) {
+  const { data, error } = await getClient().storage.from(BUCKET).createSignedUrl(filename, expiresInSeconds);
+  if (error) throw storageError('Could not create a download link.', error);
+  return data.signedUrl;
+}
+
 export async function readSavedPdf(filename) {
   const { data, error } = await getClient().storage.from(BUCKET).download(filename);
   if (error) throw storageError('Could not read the saved PDF.', error);

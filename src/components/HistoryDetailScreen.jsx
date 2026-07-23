@@ -6,6 +6,7 @@ import { AnswerSummary, ErrorBanner, LoadingView, PrimaryButton, ScreenHeader, S
 export default function HistoryDetailScreen({ historyId, goBack, resumeQuiz }) {
   const [entry, setEntry] = useState(null);
   const [error, setError] = useState('');
+  const [downloadingFile, setDownloadingFile] = useState(null);
   const { confirmAsync } = useModals();
 
   const load = useCallback(async () => {
@@ -20,6 +21,22 @@ export default function HistoryDetailScreen({ historyId, goBack, resumeQuiz }) {
   useEffect(() => {
     load();
   }, [load]);
+
+  const download = async (filename) => {
+    setError('');
+    setDownloadingFile(filename);
+    try {
+      // Bucket stays private -- every download goes through this route to
+      // mint a fresh, short-lived signed URL (docs/rules.md), never a
+      // cached or long-lived one.
+      const { url } = await apiFetch(`/api/saved-pdfs/${encodeURIComponent(filename)}/download`);
+      window.open(url, '_blank', 'noopener,noreferrer');
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setDownloadingFile(null);
+    }
+  };
 
   const remove = async () => {
     const ok = await confirmAsync('Delete this quiz?', 'This result will be permanently deleted.', 'Delete');
@@ -48,7 +65,19 @@ export default function HistoryDetailScreen({ historyId, goBack, resumeQuiz }) {
       {!entry.completed && (
         <PrimaryButton title="Resume Quiz" onClick={() => resumeQuiz(entry)} style={{ marginBottom: 16 }} />
       )}
-      <p className="subtext">{entry.sourcePdfs.join(', ')}</p>
+      {entry.sourcePdfs.map((filename) => (
+        <p className="subtext" key={filename}>
+          {filename}{' '}
+          <button
+            type="button"
+            className="link-button"
+            onClick={() => download(filename)}
+            disabled={downloadingFile === filename}
+          >
+            {downloadingFile === filename ? 'Preparing...' : 'Download'}
+          </button>
+        </p>
+      ))}
       <p className={entry.completed ? 'history-score' : 'history-in-progress'}>
         {entry.completed ? `${entry.score} / ${entry.total}` : `In progress · ${entry.answeredCount}/${entry.total} answered`}
       </p>
