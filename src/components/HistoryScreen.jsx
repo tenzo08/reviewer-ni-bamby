@@ -193,11 +193,14 @@ export default function HistoryScreen({ navigate, goHome, retakeQuiz }) {
                     </p>
                   </div>
                   {!selectionMode && (
-                    <SecondaryButton
-                      title={retakingId === e.id ? 'Loading...' : 'Retake'}
+                    <button
+                      type="button"
+                      className="link-button history-card-retake"
                       onClick={(ev) => retake(e, ev)}
                       disabled={retakingId !== null}
-                    />
+                    >
+                      {retakingId === e.id ? 'Loading...' : 'Retake'}
+                    </button>
                   )}
                 </div>
               </div>

@@ -411,6 +411,17 @@ input {
   accent-color: var(--primary);
 }
 
+/* Sits at the top-right of each history card (history-card-row's
+   align-items: flex-start already places a short sibling there) --
+   compact like the Delete/Remove link-buttons elsewhere, not a full-size
+   button competing with the card's own content. */
+.history-card-retake {
+  flex-shrink: 0;
+  color: var(--primary-dark);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
 .history-selection-bar {
   display: flex;
   align-items: center;
